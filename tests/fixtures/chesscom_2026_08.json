@@ -1,0 +1,70 @@
+{
+ "games": [
+  {
+   "url": "https://www.chess.com/game/live/111111111",
+   "pgn": "[Event \"Live Chess\"]\n[Site \"Chess.com\"]\n[Date \"2026.08.02\"]\n[White \"frank_c\"]\n[Black \"Alice\"]\n[Result \"1/2-1/2\"]\n[UTCDate \"2026.08.02\"]\n[UTCTime \"12:00:00\"]\n[WhiteElo \"1400\"]\n[BlackElo \"1420\"]\n[TimeControl \"600\"]\n[Termination \"Game drawn by agreement\"]\n[Link \"https://www.chess.com/game/live/111111111\"]\n\n1. e4 {[%clk 0:10:00]} 1... e6 {[%clk 0:09:58]} 2. d4 {[%clk 0:09:55]} 2... d5 {[%clk 0:09:50]} 1/2-1/2\n",
+   "time_control": "180+2",
+   "end_time": 1790000000,
+   "rated": true,
+   "uuid": "00000000-0000-0000-0000-ve/111111111",
+   "initial_setup": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+   "fen": "",
+   "time_class": "rapid",
+   "rules": "chess",
+   "white": {
+    "rating": 1450,
+    "result": "win",
+    "username": "Alice"
+   },
+   "black": {
+    "rating": 1502,
+    "result": "resigned",
+    "username": "opponent"
+   }
+  },
+  {
+   "url": "https://www.chess.com/game/live/333333333",
+   "pgn": "[Event \"Live Chess - Chess960\"]\n[Site \"Chess.com\"]\n[Date \"2026.09.21\"]\n[White \"Alice\"]\n[Black \"dave960\"]\n[Result \"*\"]\n[Variant \"Chess960\"]\n[SetUp \"1\"]\n[FEN \"bqnb1rkr/pp3ppp/3ppn2/2p5/5P2/P2P4/NPP1P1PP/BQ1BNRKR w HFhf - 2 9\"]\n\n9. g3 *\n",
+   "time_control": "180+2",
+   "end_time": 1790000000,
+   "rated": true,
+   "uuid": "00000000-0000-0000-0000-ve/333333333",
+   "initial_setup": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+   "fen": "",
+   "time_class": "blitz",
+   "rules": "chess960",
+   "white": {
+    "rating": 1450,
+    "result": "win",
+    "username": "Alice"
+   },
+   "black": {
+    "rating": 1502,
+    "result": "resigned",
+    "username": "opponent"
+   }
+  },
+  {
+   "url": "https://www.chess.com/game/daily/987654321",
+   "pgn": "[Event \"Let's Play!\"]\n[Site \"Chess.com\"]\n[Date \"2026.08.30\"]\n[Round \"-\"]\n[White \"Alice\"]\n[Black \"slowpoke\"]\n[Result \"1-0\"]\n[UTCDate \"2026.08.30\"]\n[UTCTime \"10:00:00\"]\n[WhiteElo \"1300\"]\n[BlackElo \"1280\"]\n[TimeControl \"1/86400\"]\n[Termination \"Alice won by checkmate\"]\n[Link \"https://www.chess.com/game/daily/987654321\"]\n\n1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0\n",
+   "time_control": "180+2",
+   "end_time": 1790000000,
+   "rated": true,
+   "uuid": "00000000-0000-0000-0000-ly/987654321",
+   "initial_setup": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+   "fen": "",
+   "time_class": "daily",
+   "rules": "chess",
+   "white": {
+    "rating": 1450,
+    "result": "win",
+    "username": "Alice"
+   },
+   "black": {
+    "rating": 1502,
+    "result": "resigned",
+    "username": "opponent"
+   }
+  }
+ ]
+}

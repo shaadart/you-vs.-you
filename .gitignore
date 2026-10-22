@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+# Local runtime home (models, engines, player data) when PCO_HOME points inside the repo
+/.pco/
