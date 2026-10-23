@@ -71,3 +71,49 @@ def test_stockfish_node_limited_eval_is_deterministic(stockfish_path):
         a = sf.evaluate(board, cands, AnalysisLimit(nodes=20_000))
         b = sf.evaluate(board, cands, AnalysisLimit(nodes=20_000))
     assert a == b
+
+
+def test_uci_driver_matches_python_chess_engine(stockfish_path):
+    """The minimal driver must produce exactly what python-chess's engine produces."""
+    import chess.engine
+
+    ref = chess.engine.SimpleEngine.popen_uci(str(stockfish_path))
+    ref.configure({"Threads": 1, "Hash": 4})
+    try:
+        with StockfishEvaluator(stockfish_path) as sf:
+            for fen in FENS[1:4]:
+                board = chess.Board(fen)
+                cands = [m.uci() for m in board.legal_moves][:5]
+                mine = sf.evaluate(board, cands, AnalysisLimit(nodes=8_000))
+                infos = ref.analyse(
+                    board,
+                    chess.engine.Limit(nodes=8_000),
+                    multipv=len(cands),
+                    root_moves=[chess.Move.from_uci(u) for u in cands],
+                    game=object(),
+                )
+                theirs = [
+                    (i["pv"][0].uci(), i["score"].pov(board.turn).score(mate_score=MATE_CP))
+                    for i in infos
+                ]
+                assert [(e.uci, e.cp) for e in mine] == theirs
+                best = ref.analyse(board, chess.engine.Limit(nodes=8_000), game=object())
+                b = sf.best(board, AnalysisLimit(nodes=8_000))
+                assert (b.uci, b.cp) == (
+                    best["pv"][0].uci(),
+                    best["score"].pov(board.turn).score(mate_score=MATE_CP),
+                )
+    finally:
+        ref.quit()
+
+
+def test_uci_driver_rejects_illegal_candidates_and_reports_dead_engine(stockfish_path):
+    from pco.analysis.stockfish import EngineError
+
+    with StockfishEvaluator(stockfish_path) as sf:
+        with pytest.raises(EngineError, match="illegal"):
+            sf.evaluate(chess.Board(), ["e2e5"], AnalysisLimit(nodes=1_000))
+        sf.proc.kill()
+        sf.proc.wait()
+        with pytest.raises(EngineError):
+            sf.evaluate(chess.Board(), ["e2e4"], AnalysisLimit(nodes=1_000))

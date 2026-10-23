@@ -134,3 +134,251 @@ data (not committed).
      `max` is now also enforced client-side.
   3. The Lichess Site header uses the form `https://lichess.org/game/<id>`, and a
      `GameId` header is present. Both forms are parsed.
+
+## E2.1: Live play latency and memory (2026-10-23)
+
+Script: `scripts/bench_play.py` (both sides are `PriorOpponent(Maia-3 5M, Elo 1500)`
+through `GameSession`, temperature 1). **Measured under heavy external load:** a
+non-pco Java process was using about 590% CPU, the system load average was
+**14–16 on 12 hardware threads**, and RAM was 14/15 GB used with swap active. Treat
+these as pessimistic, and re-measure on an idle machine. The idle single-position
+reference is E0.2 (about 10 ms at 4 threads).
+
+| torch threads | games | plies | latency p50 | p95 | p99 | max | peak RSS |
+|---|---|---|---|---|---|---|---|
+| 4 | 10 | 1,068 | 42.0 ms | 103.0 ms | 218.9 ms | 394.2 ms | 260 MB |
+| 1 | 5 | 406 | 37.1 ms | 82.3 ms | 99.2 ms | 156.0 ms | 265 MB |
+
+- Prior load time is 0.14–0.18 s. All 15 games ended normally (14 checkmates, 1
+  stalemate), and none hit the ply cap.
+- The `pco play` server process peaked at 266 MB (`VmHWM`) after a few moves.
+- Under this load, 1 thread was no slower than 4 (oversubscription). Default
+  threads for live play should be revisited on an idle machine (It. 7 hardware
+  profiles).
+- Live play through the HTTP API with real Maia (seed 1) reproduced the identical
+  replies e6, d5, dxc4 on two separate server runs.
+
+## E2.2: Calling-thread effect on inference latency (2026-10-23)
+
+The same loaded machine as E2.1, with a single position after 1.e4 and 10 calls
+each. Same thread: median 45.9 ms. A fresh thread per call (what
+`ThreadingHTTPServer` does): 56.3 ms. One persistent worker thread: 43.4 ms. That
+is about 10 ms saved per move, so opponent inference runs on one persistent
+worker (ARCHITECTURE D15).
+
+## E2.1b: Live play latency re-measured on an idle machine (2026-10-23)
+
+Same script and settings as E2.1, at load average about 2 (no external load).
+These numbers supersede E2.1 as the reference.
+
+| torch threads | games | plies | p50 | p95 | p99 | max | peak RSS |
+|---|---|---|---|---|---|---|---|
+| 4 | 10 | 1,048 | 20.2 ms | 24.7 ms | 28.2 ms | 46.7 ms | 264 MB |
+| 1 | 5 | 403 | **13.5 ms** | 16.1 ms | 17.2 ms | 18.5 ms | 268 MB |
+
+For single-position live inference, 1 thread is faster than 4 because thread
+overhead dominates at batch 1. Revisit the `torch_threads` default for live play in
+It. 7. Keep more threads for offline batch building (E0.2). These games used the new
+default T=0.7, which doesn't affect latency.
+
+## E2.3: Sampled-prior strength vs real humans (2026-10-23)
+
+**Trigger:** the owner reported that the play opponent (Maia-3 5M, Elo 1500, T=1)
+made more mistakes than expected and felt weaker than a Maia they had played
+before.
+
+**Check 1: adapter correctness.** `Maia3Prior` scored top-1 0.5717 and NLL 1.2859
+on 8,000 D0 positions, consistent with E0.1 (0.5645/1.3045 on 9,429 positions) and
+the published 57.1%. No encoding bug was found.
+
+**Check 2: strength.** Script `scripts/strength_check.py`. Random D0 positions with
+ply ≥ 8 and a mover rated 1300–1700, with the prior conditioned on the mover's
+rating. Each policy picks one move per position. Every pick, plus the engine's best
+move, is scored in one Stockfish 19 `root_moves` search at 50k nodes. Loss is
+measured against the best candidate, with cp clipped to [0, 1000]; wp is a
+logistic win probability (400 cp scale). n = 1,500 per run, one sample per position.
+
+| policy | run A cp loss | A blunder ≥300 | run B cp loss | B mistake ≥100 | B blunder ≥300 |
+|---|---|---|---|---|---|
+| actual human move | 63.2 | 5.1% | 72.1 | 16.9% | 6.9% |
+| argmax (like the Lichess Maia bots) | 45.6 | 3.6% | 55.3 | 13.5% | 4.7% |
+| sample T=1 (old play default) | 83.4 | 7.6% | 95.5 | 21.5% | 9.5% |
+| sample T=0.8 | — | — | 77.1 | 18.7% | 7.8% |
+| sample T=0.7 | — | — | 77.2 | 18.1% | 7.2% |
+| sample T=0.6 | — | — | 73.1 | 17.4% | 6.6% |
+| sample T=0.5 | 56.3 | 4.5% | 62.6 | 14.8% | 5.4% |
+
+Run A used seed 0 and run B seed 1. The seed also selects the positions, so
+absolute levels differ between runs; compare within a run. The mean cp-loss
+standard error is roughly ±4 cp per cell (estimated, not computed), so T=0.6 and
+T=0.7 are not distinguishable.
+
+NLL of the actual human move under temperature-scaled policy (run B positions):
+T0.5 1.529, T0.6 1.398, T0.7 1.325, T0.8 1.288, **T0.9 1.275**, T1.0 1.277,
+T1.1 1.290, T1.2 1.311.
+
+**Findings**
+1. The owner's observation is real. **Sampling at T=1 is clearly weaker than the
+   humans it models:** 32–37% more cp loss and 38–49% more blunders. Argmax is
+   stronger than those humans, which is consistent with "the Maia I played before"
+   being argmax-based (the Lichess Maia bots). That is likely but not verified.
+2. **Likelihood calibration and behavioral quality disagree.** NLL is near-optimal
+   at T≈0.9–1.0, so each decision's probabilities are roughly calibrated, but whole
+   samples are too erratic. Interpretation (hypothesis): a population model spreads
+   mass over moves that *different* players at this rating would play, so it
+   carries population-level and epistemic uncertainty. One sample from that mixture
+   per move is noisier than any single consistent human. Personalization should
+   narrow this, and that is testable in It. 5.
+3. Action: the play default is now **T=0.7** (provisional, generic opponent only).
+   It is in the range where cp loss and blunder rate match the real humans.
+   Temperature becomes a measured, per-player parameter. It. 4 adds a
+   "sampled-quality match" metric next to NLL, and It. 5 fits it on held-out data.
+
+## E3.1: Decision-dataset build at realistic scale (2026-10-23)
+
+Lichess `thibault`: the 200 most recent games (imported with `--max 200`), 7,281
+own decisions. Default `AnalysisConfig` (k_max 5, mass 0.95, 10k nodes for the
+set, 5k for the best move), 4 engine workers, torch 4 threads, idle machine
+(load about 1–4), new UCI driver, pipelined builder.
+
+- Cold build: **126.2 s, 58 decisions/s**. A cached rebuild takes 4.9 s (1,495/s,
+  0 engine and prior misses). Within the cold build, 1,233 engine hits came from
+  repeated positions (openings).
+- Cache file: 7.3 MB (about 1.0 KB per decision). JSONL export: 18 MB.
+- Reproducibility: on 20 games, a fresh-cache rebuild with 2 workers was
+  byte-identical to the 4-worker build, and a cached rebuild was byte-identical
+  to the first build (after the canonical-precision fix; see PROGRESS).
+- Dataset profile:
+  - 69 forced positions.
+  - The live set averages 4.28 moves (sizes 1–6).
+  - The actual move is in the live set **93.1%** of the time; the other 6.9% are
+    evaluated separately.
+  - The actual move is the prior's top-1 58.9% of the time and the engine best
+    41.1%.
+  - Mean cp loss of the actual move is 55.0, with 4.1% blunders (≥300 cp).
+  - Phases: opening 2,257 / middlegame 2,817 / endgame 2,207.
+  - Elo 1698–1858, clocks present in 100% of decisions.
+
+## E3.2: Engine-evaluation throughput and thread scaling (2026-10-23)
+
+Idle machine. 240 positions from E3.1, 6 root moves each, MultiPV 6, 10k nodes,
+`ucinewgame` per search. Searches/s by thread count (one engine process per
+thread):
+
+| driver | hash | 1 | 2 | 4 | 8 |
+|---|---|---|---|---|---|
+| python-chess `analyse`, INFO_ALL | 64 MB | 52 | 72 | 78 | 87 |
+| python-chess `analyse`, SCORE\|PV | 64 MB | 51 | 73 | 87 | 91 |
+| python-chess, SCORE\|PV | 4 MB | 62 | 92 | 109 | 113 |
+| minimal UCI driver | 64 MB | 58 | — | 108 | 112 |
+| minimal UCI driver | 16 MB | 64 | — | 135 | 166 |
+| minimal UCI driver | **4 MB** | 65 | — | **147** | **184** |
+
+- Two separate limits. (1) `ucinewgame` clears the whole hash table on every
+  search, and with 64 MB that clearing is memory-bandwidth-bound and stops thread
+  scaling. (2) python-chess's per-line asyncio processing holds the GIL and caps
+  multi-engine throughput (109 vs 147 at 4 threads with the same 4 MB hash).
+- Process pools were tried. With both `fork` and `spawn`, the workers finished
+  their task, but the pool never shut down because python-chess's engine keeps a
+  non-daemon thread. That approach was abandoned for the minimal driver.
+- End-to-end builder effect, 663 decisions, 4 workers: 19.9 s before, 12.7 s
+  after the driver and hash change, 12.3 s with prior/engine pipelining.
+  Pipelining matters more for long runs with many chunks.
+- Correctness: the driver equals python-chess move-for-move and cp-for-cp on test
+  positions with identical settings, including the last-line-may-be-a-bound
+  behavior.
+
+## E4.1–E4.2: Baselines on held-out future games (2026-10-23)
+
+Command: `pco eval PLAYER` with defaults:
+- split: the oldest 70% of games for train, the next 10% for val, the newest 20%
+  for test
+- default `AnalysisConfig`, prior `maia3-5m@ba14208b2992`, engine
+  `Stockfish 19|threads=1|hash=4`
+- quality sweep at temperatures {0, 0.5, 0.6, 0.7, 0.8, 1.0}, 2 samples per
+  position, seed 0, 1,000 game-level bootstrap resamples
+
+Metrics cover non-forced test decisions. All tuning (Elo offset, temperature, book
+alpha, quality temperature) happened on val only. Data: each player's 1,000 most
+recent public Lichess games (scratch homes, not committed).
+
+### E4.1: `thibault`, Lichess blitz ≈1700–1860
+
+- Split `c3a0cae2ad7e9b7b`: 697/100/199 games. Test starts 2026-09-12. 7,191 test
+  decisions scored, 69 forced excluded. 868 (12.1%) are in-book.
+- Cold run 816 s. A cached rerun took 150 s and reproduced every metric, parameter
+  and quality number exactly.
+
+| predictor | NLL | top1 | top3 | ECE | ΔNLL vs maia [95% CI] | in-book top1 / NLL | out-of-book top1 / NLL |
+|---|---|---|---|---|---|---|---|
+| uniform | 3.2393 | 0.056 | 0.161 | 0.000 | +2.0071 [+1.9596, +2.0537] | 0.041 / 3.285 | 0.058 / 3.233 |
+| maia (game Elo) | 1.2322 | 0.589 | 0.859 | 0.028 | reference | 0.619 / 1.135 | 0.584 / 1.245 |
+| maia+T (T=0.95) | 1.2295 | 0.589 | 0.859 | 0.016 | −0.0027 [−0.0039, −0.0014] | 0.619 / 1.124 | 0.584 / 1.244 |
+| maia+elo (+100) | 1.2252 | 0.588 | 0.859 | 0.021 | −0.0070 [−0.0088, −0.0052] | 0.615 / 1.126 | 0.584 / 1.239 |
+| maia+elo+T | 1.2238 | 0.588 | 0.859 | 0.019 | −0.0084 [−0.0109, −0.0060] | 0.615 / 1.115 | 0.584 / 1.239 |
+| book(maia+elo+T), α=2 | **1.1678** | **0.606** | 0.866 | 0.012 | **−0.0644** [−0.0738, −0.0558] | **0.763 / 0.651** | 0.584 / 1.239 |
+
+Breakdowns, maia top1/NLL:
+- By phase: opening 0.595/1.221, middlegame 0.545/1.372, endgame 0.638/1.066.
+- By legal-move count: 2–10 moves 0.739/0.645, 11–25 moves 0.624/1.094, 26+ moves
+  0.557/1.357.
+- By test half: early 0.587/1.231, late 0.590/1.233 (no drift within the test
+  period).
+- The book's gain is entirely in the opening phase (0.595 → 0.652 top1); middlegame
+  and endgame are unchanged.
+- Time class is 96% blitz. Rapid has n=260, and classical n=1, which is too small
+  to read.
+
+Sampled quality on test (mean cp loss / blunder rate):
+- The actual player: **55 / 4.1%**.
+- maia sampled at T=0: 41 / 2.7%; T=0.5: 49/3.5%; T=0.6: 51/3.7%; **T=0.7:
+  55/4.0%**; T=0.8: 58/4.3%; T=1.0: 66/5.5%.
+- The temperature chosen on val (0.7) matches on test.
+- maia+elo and the book behave similarly; their val-chosen T was 0.7.
+
+### E4.2: `warpentak`, Lichess blitz ≈1220
+
+- Split `a9726602c78de4a9`: 680/96/194 games. Test starts 2026-09-05. **One
+  held-out game was dropped as a duplicate move sequence of an earlier game.**
+  6,118 decisions scored, 54 forced excluded. 752 (12.3%) are in-book.
+- Cold run 1,152 s.
+
+| predictor | NLL | top1 | top3 | ECE | ΔNLL vs maia [95% CI] | in-book top1 / NLL | out-of-book top1 / NLL |
+|---|---|---|---|---|---|---|---|
+| uniform | 3.2253 | 0.058 | 0.164 | 0.000 | +1.6709 [+1.6237, +1.7143] | 0.040 / 3.247 | 0.060 / 3.222 |
+| maia (game Elo) | 1.5544 | 0.502 | 0.772 | 0.024 | reference | **0.338 / 2.338** | 0.525 / 1.445 |
+| maia+T (T=1.05) | 1.5529 | 0.502 | 0.772 | 0.022 | −0.0014 [−0.0027, −0.0001] | 0.338 / 2.307 | 0.525 / 1.447 |
+| maia+elo (offset 0) | 1.5544 | 0.502 | 0.772 | 0.024 | +0.0000 | 0.338 / 2.338 | 0.525 / 1.445 |
+| maia+elo+T | 1.5529 | 0.502 | 0.772 | 0.022 | −0.0014 [−0.0027, −0.0001] | 0.338 / 2.307 | 0.525 / 1.447 |
+| book(maia+elo+T), α=2 | **1.3589** | **0.562** | 0.812 | 0.028 | **−0.1954** [−0.2130, −0.1783] | **0.828 / 0.729** | 0.525 / 1.447 |
+
+Sampled quality on test (mean cp loss / blunder rate):
+- The actual player: **77 / 6.3%**.
+- maia at T=0: 49/3.5%; T=0.5: 56/4.1%; T=0.7: 63/5.0%; T=0.8: 69/5.5%; **T=1.0:
+  82/7.2%**.
+- The val-chosen T was **1.0** (maia) and 0.8 (book).
+
+### Findings (both players)
+
+1. **Generic Maia predicts these players' future moves at 50–59% top-1, and no
+   generic adjustment helps much.** The fitted Elo offset and NLL temperature
+   change NLL by less than 0.01. They are statistically significant for thibault,
+   but tiny.
+2. **The opening book is the only strong baseline, and its gain is pure
+   repertoire.** It gives −0.064 and −0.195 NLL, with in-book top1 76–83%, but
+   out-of-book metrics are identical to its base. About 12% of test decisions are
+   in-book. For warpentak, Maia is *bad* in their repertoire (in-book top1 0.338),
+   which suggests idiosyncratic openings.
+3. **Bar for It. 5:** a personalized model must beat `book(maia+elo+T)`. To claim
+   learned *style* rather than memorization, it must improve **out-of-book**
+   NLL/top1 (thibault 1.239/0.584, warpentak 1.447/0.525) with a bootstrap CI
+   excluding 0.
+4. **The quality-matching temperature is player-dependent.** It was 0.7 for
+   thibault (≈1800) and about 1.0 for warpentak (≈1220). E2.3's "T=1 is too weak"
+   held for the 1300–1700 arena population and thibault, but not for this
+   lower-rated player, whose own move quality is closer to T=1 samples. So the play
+   temperature must be fitted per player (D16, It. 5), and the generic 0.7 default
+   remains only a fallback.
+5. NLL-optimal T (0.95–1.05) ≠ quality-matching T (0.7–1.0). The distinction (E2.3)
+   is confirmed on held-out data for one of two players.
+6. Calibration is good for all Maia variants (ECE 0.012–0.028).

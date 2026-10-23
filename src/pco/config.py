@@ -42,6 +42,21 @@ class Settings:
         return self.home / "pco.sqlite3"
 
     @property
+    def analysis_cache_path(self) -> Path:
+        """Prior/engine analysis cache (derived, reproducible, deletable)."""
+        return self.cache_dir / "analysis.sqlite3"
+
+    @property
+    def reports_dir(self) -> Path:
+        """Evaluation reports (JSON)."""
+        return self.home / "reports"
+
+    @property
+    def played_dir(self) -> Path:
+        """PGNs of games played against pco. Generated data: never imported as evidence."""
+        return self.home / "played"
+
+    @property
     def cache_dir(self) -> Path:
         """Reproducible, versioned caches (e.g. engine analysis). Safe to delete."""
         return self.home / "cache"

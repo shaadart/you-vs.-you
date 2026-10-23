@@ -52,7 +52,7 @@ def main():
     dists = prior.predict([PriorRequest(b, 1500, 1500) for b in boards])
     print(f"positions={len(boards)} (ply>=10, >=8 legal moves)")
 
-    with StockfishEvaluator(stockfish_binary(settings)) as sf:
+    with StockfishEvaluator(stockfish_binary(settings), hash_mb=64) as sf:  # as run for E0.3
         print(f"engine={sf.engine_id} threads=1 hash=64MB")
         for k in (3, 5, 8):
             cands = [[m for m, _ in d.top(k)] for d in dists]

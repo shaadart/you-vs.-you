@@ -117,3 +117,171 @@ Python 3.14 (system), uv 0.11.21, git and node. Stockfish and lc0 are not instal
   directories existed. From now on, schema changes must be new migrations.
 - E0.4 was superseded: the Lichess 404 came from curl's default User-Agent, not an
   auth requirement.
+
+## 2026-10-23: Iteration 2 (playable chess core and human prior): COMPLETED
+
+**Starting state.** The owner had committed Iterations 0–1 as `8cecdc8`. An
+uncommitted owner change to `.gitignore` (ignoring `CLAUDE.md`) was left untouched.
+67 tests passed.
+
+**Files added**
+- `src/pco/play/`: `opponent.py`, `session.py`, `server.py`, `static/index.html`,
+  `__init__.py`.
+- Empty `__init__.py` for `storage/` and `importers/` (these were implicit
+  namespace packages; behavior unchanged).
+- `tests/test_play.py` (17 tests: session rules, mate, threefold, promotion,
+  resignation, opponent failure, generated-PGN refusal, HTTP game, security
+  checks, and 2 real-Maia tests). `tests/test_ui_js.py` and `tests/js/ui_check.js`
+  run the page script against DOM stubs, and skip without node.
+- `scripts/bench_play.py`.
+
+**Files changed**
+- `normalize.py`: rejects `[PcoGenerated "true"]` games.
+- `config.py`: added `played_dir`.
+- `cli.py`: added `pco play [--port --elo --temperature --seed --no-browser]`.
+
+**Validation (final run)**
+- `uv run pytest -q`: 85 passed (assets and node present). ruff check and format
+  are clean.
+- Manual functional run: `pco play --no-browser --port 8799 --seed 1` against real
+  Maia. Four human moves through the API got legal, plausible replies with
+  probabilities and top-5 lists. A foreign `Host` header gets 403. A headless
+  Firefox screenshot shows the correct position, last-move highlight, decision
+  panel and move list.
+- Node UI check: 64 clickable squares, target markers, a move sent and followed
+  by an opponent request, and a promotion picker that sends `a7a8n` only after a
+  piece is chosen.
+- E2.1 and E2.2 measurements, under external load (see EXPERIMENTS).
+
+**Bugs found during the iteration**
+- Two test-authoring errors: a FEN that put the king in check, and wrong-color
+  moves in the seed test. Both were fixed in the tests; the code was correct.
+- `pco play` output was block-buffered when stdout is not a TTY, so the ready
+  line didn't appear. Fixed with `flush=True`.
+- Per-request threads rebuilt torch thread pools, costing about 10 ms per move.
+  Fixed with a persistent inference worker.
+
+**Decisions:** ARCHITECTURE D12–D15.
+
+**Open**
+- Latency must be re-measured on an idle machine; the E2.1 numbers were taken at
+  load average 14–16.
+- License still undecided.
+
+## 2026-10-23: Post-Iteration-2 investigation (owner report: opponent too weak)
+
+- The owner played `pco play` (Maia-3 5M, Elo 1500, T=1) and found it made more
+  mistakes than expected and seemed weaker than a Maia they had played before.
+- Verified the adapter is correct (top-1 0.572 on 8k positions, matching E0.1),
+  then measured strength vs real humans with the new `scripts/strength_check.py`.
+  Result (E2.3): T=1 sampling has 32–37% more cp loss and 38–49% more blunders than
+  real 1300–1700 players on the same positions. Argmax is stronger than those
+  humans. T≈0.6–0.7 matches them, while NLL is best at T≈0.9–1.
+- Changed: `DEFAULT_PLAY_TEMPERATURE = 0.7` (`play/opponent.py`), used by
+  `PriorOpponent`, `PlayApp`, `pco play` (where `--temperature` defaults to it) and
+  the page form. ARCHITECTURE D16. ROADMAP It. 4 and It. 5 now require
+  sampled-quality-match metrics and a fitted play temperature.
+- Re-measured live latency on an idle machine (E2.1b): p50 20.2 ms at 4 threads and
+  13.5 ms at 1 thread.
+- Tests: 85 passed. ruff is clean.
+
+## 2026-10-23: Iteration 3 (decision episodes, features, analysis): COMPLETED
+
+**Files added**
+- `src/pco/decisions/`: `episodes.py`, `cache.py`, `analysis.py`, `features.py`,
+  `__init__.py`.
+- `tests/test_decisions.py`: 12 tests covering own-move coverage, exact pre-move
+  positions, clock semantics, leakage, forward-only Elo carry, missing clocks,
+  adaptive candidates, a live set unaffected by the actual move, cache hits and
+  invalidation, cache schema, forced moves, flagged labels with a label-free
+  live view, and a real-asset reproducibility test.
+
+**Files changed**
+- `analysis/stockfish.py`: rewritten as a minimal UCI driver, with an `Evaluator`
+  protocol, `best()`, 4 MB default hash, an engine_id that includes settings, and
+  `EngineError`.
+- `priors/base.py` and `maia3.py`: `input_key()`; `model_id` is now
+  `maia3-5m@<sha256[:12]>`.
+- `config.py`: `analysis_cache_path`.
+- `cli.py`: `pco build`.
+- `scripts/strength_check.py`: uses `best()`.
+- `scripts/feasibility_stockfish.py`: pins 64 MB to reproduce E0.3.
+- `tests/test_foundation.py`: parser test.
+- `tests/test_assets_integration.py`: driver ≡ python-chess, plus driver error
+  handling.
+
+**Validation (final run)**
+- `uv run pytest -q`: 100 passed. With an empty home, 89 passed and 11 skipped.
+  ruff is clean and the lock is OK.
+- Live: `pco build thibault` on 200 real games (7,281 decisions) took 126 s cold
+  and 4.9 s cached (E3.1).
+- Exports were byte-identical across a fresh-cache rebuild with different worker
+  counts, and across cached vs fresh builds.
+- `pco doctor` evaluations are identical to the old driver (d2d4 +36, f1b5 +30,
+  f1c4 +18).
+
+**Bugs found and fixed**
+1. A first build vs a cached rebuild differed in prior floats: the cache rounds
+   to 6 decimals but fresh results didn't. Both paths now go through
+   `canonical_logprobs`.
+2. The first driver version dropped `lowerbound`/`upperbound` lines. That gave
+   an older score than python-chess for an interrupted slot, and lost candidates
+   entirely in short searches (a crash in the reproducibility test). Bounds are
+   now kept like python-chess, and `evaluate` raises `EngineError` if any
+   candidate is still missing.
+3. The builder's worker closure captured loop variables (ruff B023; latent bug).
+   It was refactored into explicit methods.
+4. Test-authoring errors: the "forced move" FEN was actually checkmate. Fixed.
+5. Process-pool experiments hung on shutdown (python-chess non-daemon thread).
+   Abandoned; see E3.2. During cleanup, `pkill -f` twice killed the agent's own
+   shell, because the pattern matched its command line. Only scratch processes
+   were affected.
+
+**Decisions:** ARCHITECTURE D17–D20.
+
+## 2026-10-23: Iteration 4 (evaluation framework and baselines): COMPLETED
+
+**Files added**
+- `src/pco/evaluation/`: `splits.py`, `predictors.py`, `metrics.py`,
+  `quality.py`, `report.py`, `__init__.py`.
+- `tests/test_evaluation.py` (9 tests on a synthetic player with a fixed opening
+  repertoire, plus an undated game and a duplicated game). They cover:
+  chronological game-level splits with duplicate drop and fingerprint stability;
+  tie-aware top-k and full-distribution NLL, with truncation rejected; ECE values;
+  bootstrap CI behavior; temperature normalization; Elo-offset selection, with ties
+  preferring 0 and a prior-mismatch guard; book gains in-book only;
+  reproducibility of the quality sweep; and an end-to-end report that is
+  deterministic, with `fit` never seeing test games (spy predictor).
+- `tests/fakes.py`: shared test doubles moved out of `test_decisions.py`.
+
+**Files changed**
+- `decisions/analysis.py`: `cached_search()` was factored out of `analyze_engine`
+  (behavior unchanged) and reused for scoring sampled moves.
+- `config.py`: `reports_dir`.
+- `cli.py`: `pco eval`.
+- README: an evaluation section.
+
+**Validation**
+- `uv run pytest -q`: 109 passed. ruff is clean.
+- Real runs:
+  - `pco eval thibault`: 1,000 games, 816 s cold.
+  - `pco eval warpentak`: 1,000 games, 1,152 s cold.
+  - The thibault cached rerun took 150 s, with identical metrics, parameters,
+    quality and split.
+  - Results are in EXPERIMENTS E4.1/E4.2.
+
+**Bugs found and fixed during the iteration**
+1. My first top-k rule credited ties to the actual move, which would have scored
+   uniform at 100% top-1. It now uses the expected hit under random tie-breaking.
+2. Grid ties picked the first grid value (Elo offset −600 for a rating-insensitive
+   prior). Ties now prefer no change (offset 0, T 1).
+3. `EloOffset` silently mixed distributions when the analyses came from a
+   different prior. It now raises (caught by a test).
+4. Test-authoring issues were fixed before landing: a mutation of shared fixture
+   episodes was replaced with `dataclasses.replace`, and a vacuous assertion was
+   removed.
+5. The first background launch used `env time`, which is not installed. It was
+   relaunched with shell timing.
+
+**Decisions:** ARCHITECTURE D21–D24; D16 updated with per-player temperature
+evidence.

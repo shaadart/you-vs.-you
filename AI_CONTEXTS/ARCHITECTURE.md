@@ -25,8 +25,8 @@ src/pco/
   assets.py           [impl] Pinned Asset manifest; download -> sha256 verify -> atomic install; offline mode
   priors/base.py      [impl] HumanPrior protocol, PriorRequest, MoveDistribution (UCI -> logprob over ALL legal moves)
   priors/maia3.py     [impl] Maia3Prior: in-process CPU inference, 8-position history from board.move_stack
-  analysis/stockfish.py [impl] StockfishEvaluator.evaluate(board, candidates, AnalysisLimit(nodes)) -> CandidateEval[]
-  cli.py              [impl] `pco setup | doctor | import {pgn,lichess,chesscom} | games [--verify]`
+  analysis/stockfish.py [impl] Evaluator protocol; StockfishEvaluator = minimal UCI driver: evaluate(candidates), best()
+  cli.py              [impl] `pco setup | doctor | import {pgn,lichess,chesscom} | games [--verify] | play | build | eval`
   storage/db.py       [impl] connect() (WAL, foreign keys) + ordered migrations via schema_version
   storage/migrations.py [impl] schema v1 (raw + normalized layers)
   storage/games.py    [impl] repository: runs, raw records, games, accounts, summary, verify
@@ -34,9 +34,22 @@ src/pco/
   importers/normalize.py [impl] RawRecord -> NormalizedGame (one PGN path for all sources)
   importers/pipeline.py  [impl] import_records(): raw store -> normalize -> dedup insert -> account linking
   importers/http.py   [impl] stdlib HTTP client: User-Agent, 429/5xx retry, injectable
-  play/               [planned, It.2] game session, Opponent protocol, local UI
-  decisions/          [planned, It.3] DecisionEpisode builder, features, analysis cache
-  evaluation/         [planned, It.4] splits, metrics, baselines, `pco eval`
+  play/opponent.py    [impl] Opponent protocol, MoveChoice, PriorOpponent (samples the prior; no fallback)
+  play/session.py     [impl] GameSession: turns, legality, termination, resignation, generated-PGN export
+  play/server.py      [impl] PlayApp + stdlib ThreadingHTTPServer on 127.0.0.1 (JSON API)
+  play/static/index.html [impl] self-contained page: inline-SVG board, click-to-move, promotion picker
+  decisions/episodes.py [impl] DecisionEpisode (observed, pre-move only) + player_episodes() chronological
+  decisions/cache.py  [impl] AnalysisCache: separate SQLite file under cache_dir (prior + engine results)
+  decisions/analysis.py [impl] AnalysisConfig, prior_candidates (adaptive), analyze_engine (shared live/offline),
+                             prior_distributions (batched+cached), DecisionBuilder (pipelined, pooled engines)
+  decisions/features.py [impl] context/candidate features + episode_record() (FEATURE_VERSION=1)
+  evaluation/splits.py  [impl] chronological game-level split (train/val/test), undated excluded,
+                             duplicate move sequences dropped from held-out, fingerprint
+  evaluation/predictors.py [impl] Predictor protocol (fit on train+val, predict full legal dists):
+                             Uniform, GenericPrior, EloOffset, Temperature, Book (composable)
+  evaluation/metrics.py [impl] NLL/top-k (tie-aware)/ECE+reliability, breakdowns, game-cluster bootstrap
+  evaluation/quality.py [impl] sampled-quality match (engine loss of sampled vs actual moves) per temperature
+  evaluation/report.py  [impl] run_evaluation() -> JSON report; format_report()
   personal/           [planned, It.5] residual personalization model, training, artifacts
 ```
 
@@ -59,11 +72,57 @@ Key interface contracts:
 - **import_records(conn, source, locator, records, username, player, complete)**
   is idempotent and commits in batches of 200. On any exception, including Ctrl-C,
   it keeps committed progress, marks the run `failed`, and re-raises.
-- **Opponent.choose_move(game_state) → move** [planned]. Implementations:
-  PriorOpponent (It. 2) and PersonalOpponent (It. 5). The UI never knows which
-  model it is talking to, beyond the label it displays.
+- **Opponent.choose_move(board) → MoveChoice** [impl]. A `MoveChoice` holds the
+  chosen move, its probability, the top 5, the source model id, and latency. The
+  board passed in carries its move stack, so priors read their own history from
+  it. `PriorOpponent` exists now; `PersonalOpponent` comes in It. 5. The UI only
+  sees `label`, which must say truthfully what the opponent is ("not
+  personalized" for now). Failures raise `OpponentError` and the position is left
+  unchanged.
+- **HumanPrior.input_key(request)** [impl]: a deterministic string naming every
+  input the output depends on. For Maia-3 that's the 8-position history FENs plus
+  both Elos. `model_id` is architecture + weight SHA-256 (`maia3-5m@ba14208b2992`).
+  Together they are the prior cache key.
+- **DecisionEpisode** [impl] holds observed inputs only:
+  - the game, its chronological index, ply, color, platform, date, time control
+  - resolved Elos with their source (`game` / `carried` from an *earlier* game /
+    `default`)
+  - the mover's clock *before* the move, the opponent's clock, and the previous
+    move's think time
+  - `root_fen` + up to 7 `recent_moves` (rebuilds the board with prior history)
+  - `actual_move`, which is a label and never an input
+- **analyze_engine(evaluator, cache, fen, prior_cands, config, actual=None)** [impl]
+  is the single path for offline and live use:
+  1. An unrestricted best-move search at `best_nodes`.
+  2. One shared search over (prior candidates ∪ engine best) at `nodes`: the *live
+     set*.
+  3. Training only: if the actual move is outside the live set, a separate
+     single-move search, so the live set's scores are identical to live
+     inference.
+- **episode_record(analysis, include_label)** [impl]: the training/eval example. Its
+  context features carry missing-data flags. Candidates are the live set plus,
+  with a label only, the actual move flagged `in_live_set=False` and
+  `separately_evaluated`.
+- **Predictor.fit(train_episodes, val_analyses) / predict(analyses) → [logprobs over
+  ALL legal moves]** [impl]. This is the contract that It. 5's personalized model
+  must implement to be evaluated. Coverage of every legal move is checked by the
+  metrics (truncated distributions raise). `fit` never receives test data, which a
+  test asserts with a spy predictor.
+- **run_evaluation(conn, player, prior, make_evaluator, cache, EvalConfig)** [impl]:
+  1. The split.
+  2. Analysis of val+test only (train needs only moves, for the book).
+  3. Each predictor is fit and scored on non-forced test decisions.
+  4. A bootstrap vs generic Maia.
+  5. The sampled-quality sweep, with the temperature chosen on val and reported
+     on test.
 
-## Data flow (first line implemented in It. 1; the rest planned)
+  Reports are deterministic except the `timing` block (test).
+- **Play HTTP API** [impl]: `GET /`, `GET /api/state`, `GET /api/pgn`, and
+  POST `/api/new {color, elo, temperature}`, `/api/move {uci}`, `/api/opponent`,
+  `/api/resign`. The human move and the opponent reply are separate requests, so
+  the page shows the human move at once. Errors return 409 with the current state.
+
+## Data flow (first two lines implemented in It. 1–3; the rest planned)
 
 ```
 PGN / Lichess / Chess.com ──importer──> raw_games (byte-exact) ──normalize──> games
@@ -96,11 +155,18 @@ diagnostic. Higher layers can be rebuilt from lower ones. The exact DDL is in
      UNIQUE(platform, username_lower))`. One person can own several accounts.
    - View `player_games` resolves color by joining accounts on (platform,
      lowercased name). Color is not stored redundantly.
-3. **Decision data [It. 3]**
-   - `prior_cache(position_key, history_key, model_id, elo_self, elo_oppo, logprobs BLOB)`
-   - `engine_cache(position_key, candidates_key, engine_id, nodes, evals BLOB)`
-   - Episode features are recomputed from the caches, or materialized with a
-     `feature_version`.
+3. **Decision data [impl, It. 3]**
+   - Episodes are *not* stored. They are recomputed from `games` (cheap and
+     deterministic).
+   - Expensive analysis lives in a **separate file**,
+     `$PCO_HOME/cache/analysis.sqlite3` (`AnalysisCache`, own `CACHE_SCHEMA`; a
+     version mismatch clears it). Deleting it never touches evidence:
+     - `prior_cache(key, model_id, logprobs zlib-JSON at 6 decimals)`, key =
+       sha256(model_id, input_key)
+     - `engine_cache(key, engine_id, nodes, evals JSON)`, key = sha256(engine_id
+       incl. threads and hash, mode best|set, nodes, FEN, sorted candidates)
+   - Features are recomputed from the caches on read, versioned by
+     `FEATURE_VERSION`. About 1 KB of cache per decision (E3.1).
 4. **Derived [It. 5+]**
    - `profiles(id, player_id, model_kind, model_version, train_config JSON,
      data_fingerprint, artifact_path, metrics JSON, created_at)`.
@@ -157,8 +223,67 @@ limit, never required). Planned: a hardware profile (It. 7).
 - **D11 Lichess is fetched as NDJSON with `pgnInJson=true`.** It gives per-game
   records on a stream (byte-exact raw storage without re-splitting PGN) and filters
   variants server-side with `perfType`. `max` is also enforced client-side (E1.1).
+- **D12 Play UI = localhost page on the stdlib HTTP server.** No dependencies,
+  works offline, real board interaction, and testable through `PlayApp` and HTTP
+  (plus a node DOM-stub check of the page script). It binds to 127.0.0.1 only,
+  checks the Host header against DNS rebinding, and requires JSON POSTs, so other
+  sites can't drive it with simple form posts.
+- **D13 Games end when a draw becomes claimable** (threefold, 50-move), as well as
+  on automatic outcomes. A sampling opponent never shuffles forever, and there is
+  no claim UI to build.
+- **D14 Played games are generated data.** They are saved as PGN files under
+  `$PCO_HOME/played/` (never in `games`), tagged `[PcoGenerated "true"]`, and the
+  normalizer rejects that tag, so they can't re-enter as human evidence even if
+  someone imports them by hand.
+- **D15 No move-source fallback.** If the prior fails, the page shows the error
+  and a retry. Opponent inference runs on one persistent worker thread, because
+  OpenMP pools are per calling thread (E2.2).
+
+- **D16 Play temperature is a measured parameter, not 1.0.** Sampling the prior at
+  T=1 was ~40% more blunder-prone than the real humans it models, while T≈0.9–1 is
+  NLL-optimal (E2.3). The generic default is 0.7 (`DEFAULT_PLAY_TEMPERATURE`); a
+  personal profile will carry its own fitted temperature. Likelihood-optimal ≠
+  behavior-matching, so both are evaluated (It. 4). *Update (E4.1/E4.2):* the
+  quality-matching T was 0.7 for a ≈1800 player and 1.0 for a ≈1220 player, so a
+  per-player fit is required, and 0.7 is only the generic fallback.
+
+- **D17 Decision analysis is cached outside the main DB**, keyed by producer
+  identity + settings + exact inputs. It is reproducible: a fresh rebuild with a
+  different worker count is byte-identical (E3.1). Fresh and cached prior values
+  both pass through `canonical_logprobs` (6 decimals), so a first build equals a
+  cached rebuild.
+- **D18 The live candidate set never sees the actual move.** Training-only
+  evaluation of an out-of-set actual move runs as its own search. The live set is
+  adaptive: prior top moves until cumulative mass ≥ 0.95 (max 5, min 2), plus the
+  engine's best move. Forced positions skip the engine.
+- **D19 Own minimal UCI driver, 4 MB hash, Threads=1.** python-chess's engine layer
+  stopped thread scaling, and large-hash clearing per `ucinewgame` was
+  memory-bound (E3.2). The driver's output equals python-chess's for identical
+  settings (test). Bound lines are kept as the last line per MultiPV slot, like
+  python-chess.
+- **D20 Engine evaluations are repetition-blind** (bare FEN), so the cache key
+  fully determines results. Prior evaluation does see the 8-position history.
+
+- **D21 Evaluation = chronological, game-level, future-predicting.** The oldest
+  70% of a player's games train, the next 10% validate (all tuning), and the
+  newest 20% test. Forced moves are excluded from headline metrics. Undated games
+  are excluded. Held-out games that duplicate earlier move sequences are dropped.
+- **D22 Scores always come from full legal distributions**, so log-likelihood is
+  never undefined by candidate truncation (spec §4). Top-k is the expected hit
+  under random tie-breaking, so uniform gets 1/n, not credit for ties.
+- **D23 Opening bias is reported, not hidden.** Every metric has an
+  in-book/out-of-book split ("position occurred in the player's training games").
+  Improvements must be read from the *out-of-book* column to claim generalization.
+- **D24 Uncertainty comes from a game-clustered bootstrap** (1,000 resamples of
+  test games). Moves within a game are dependent, so a per-move CI would be too
+  narrow.
 
 ## Known limitations
+
+- Play: one game at a time per server, no takeback, no clocks or time control.
+  The opponent Elo is chosen by the user, not derived from their games. Pieces are
+  Unicode glyphs, which depend on system fonts (DejaVu, Segoe UI Symbol and Noto
+  are listed as fallbacks).
 
 - Maia-3's encoder uses a perspective-mirrored board history. For a FEN without a
   move stack, history is padded with the current position, which is measurably
@@ -169,6 +294,16 @@ limit, never required). Planned: a hardware profile (It. 7).
   `predict(...)` batch size is the caller's choice; offline builders should use 64.
 - Process RSS is about 520 MB with the 5M prior loaded, mostly the torch runtime.
   An ONNX Runtime export is a possible Lite-profile optimization (It. 7, unmeasured).
+- Decision building costs about 58 decisions/s (4 engine workers, idle machine;
+  E3.1): roughly 20 min for a 70k-decision history, once, then cached.
+- Elo conditioning feeds chess.com ratings into Lichess-trained Maia-3 unadjusted.
+  Rating pools differ, and a fitted Elo (It. 4 baseline) is the planned remedy.
+- The book baseline counts train games only. Validation games are not added
+  before scoring test, which slightly understates the book on test.
+- An evaluation of 1,000 games costs about 14 min cold (analysis of val+test plus
+  the Elo grid and the quality sweep), and 2.5 min cached (E4.1).
+- Only basic features exist (FEATURE_VERSION 1). No opening-familiarity or
+  position-frequency features yet (It. 4 analyzes opening bias first).
 - Normalizer changes after release must bump `NORMALIZER_VERSION`. A
   re-normalize command from `raw_games` doesn't exist yet; the raw data keeps it
   possible.

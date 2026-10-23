@@ -18,6 +18,7 @@ from maia3.model_registry import apply_model_config, resolve_model_spec
 from maia3.models import MAIA3Model
 from maia3.utils import get_all_possible_moves, mirror_move
 
+from pco.assets import sha256_file
 from pco.priors.base import MoveDistribution, PriorError, PriorRequest
 
 HISTORY = 8  # positions per input, fixed by the released checkpoints
@@ -43,7 +44,8 @@ class Maia3Prior:
             history=HISTORY, use_padding=False, include_time_info=False, device="cpu"
         )
         apply_model_config(self.cfg, spec)
-        self.model_id = f"{spec.name}@{checkpoint.name}"
+        # Identity = architecture + weight checksum, so caches keyed on it never mix versions.
+        self.model_id = f"{spec.name}@{sha256_file(checkpoint)[:12]}"
         state = torch.load(checkpoint, map_location="cpu", weights_only=True)
         state = state.get("model_state_dict", state)
         state = {k.replace("smolgen", "gab"): v for k, v in state.items()}
@@ -57,6 +59,11 @@ class Maia3Prior:
         self.model.eval()
         self.vocab = get_all_possible_moves()
         self.index = {m: i for i, m in enumerate(self.vocab)}
+
+    def input_key(self, req: PriorRequest) -> str:
+        """Everything this model's output depends on: the history window and ratings."""
+        fens = "/".join(b.fen() for b in history_boards(req.board))
+        return f"{fens}|{req.self_elo}|{req.oppo_elo}"
 
     def _encode(self, req: PriorRequest) -> torch.Tensor:
         tokens = deque(tokenize_board(b) for b in history_boards(req.board))

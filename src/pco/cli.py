@@ -1,12 +1,17 @@
 """Command-line entry point.
 
 `pco setup` installs assets, `pco doctor` checks them, `pco import ...` loads games,
-and `pco games` summarizes what is stored.
+`pco games` summarizes what is stored, `pco play` opens a local game in the browser, and
+`pco build` turns a player's games into analyzed decision episodes, and `pco eval`
+measures move predictors on the player's held-out future games.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import random
 import sys
 import time
 from datetime import UTC, datetime
@@ -170,6 +175,170 @@ def cmd_games(settings: Settings, verify: bool = False) -> int:
         conn.close()
 
 
+def cmd_play(settings: Settings, args: argparse.Namespace) -> int:
+    import webbrowser
+
+    from pco.play.opponent import DEFAULT_PLAY_TEMPERATURE, PriorOpponent
+    from pco.play.server import PlayApp, make_server
+    from pco.priors.maia3 import Maia3Prior
+
+    prior = Maia3Prior(
+        ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.torch_threads
+    )
+    rng = random.Random(args.seed)
+    app = PlayApp(
+        lambda elo, temp: PriorOpponent(prior, elo, temperature=temp, rng=rng),
+        settings.played_dir,
+        elo=args.elo,
+        temperature=DEFAULT_PLAY_TEMPERATURE if args.temperature is None else args.temperature,
+    )
+    try:
+        server = make_server(app, args.port)
+    except OSError as exc:
+        print(f"error: cannot listen on 127.0.0.1:{args.port}: {exc}", file=sys.stderr)
+        return 1
+    url = f"http://127.0.0.1:{server.server_address[1]}/"
+    print(f"pco play: {url}  (opponent: {prior.model_id}, generic - not personalized yet)")
+    print("Ctrl-C to stop.", flush=True)
+    if not args.no_browser:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        app.inference.shutdown()
+    return 0
+
+
+def cmd_build(settings: Settings, args: argparse.Namespace) -> int:
+    from pco.analysis.stockfish import StockfishEvaluator
+    from pco.decisions.analysis import AnalysisConfig, DecisionBuilder
+    from pco.decisions.cache import AnalysisCache
+    from pco.decisions.episodes import player_episodes
+    from pco.decisions.features import episode_record
+    from pco.priors.maia3 import Maia3Prior
+
+    conn = connect(settings.db_path)
+    try:
+        if conn.execute("SELECT 1 FROM players WHERE name=?", (args.player,)).fetchone() is None:
+            print(f"error: no player named {args.player!r} (see `pco games`)", file=sys.stderr)
+            return 1
+        episodes = list(player_episodes(conn, args.player, args.max_games))
+    finally:
+        conn.close()
+    if not episodes:
+        print(f"player {args.player!r} has no decisions to analyze")
+        return 0
+    config = AnalysisConfig(
+        k_max=args.k, mass=args.mass, nodes=args.nodes, best_nodes=args.best_nodes
+    )
+    prior = Maia3Prior(
+        ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.torch_threads
+    )
+    sf_path = stockfish_binary(settings)
+    workers = args.workers or max(1, min(4, (os.cpu_count() or 2) - 2))
+    cache = AnalysisCache(settings.analysis_cache_path)
+    builder = DecisionBuilder(prior, lambda: StockfishEvaluator(sf_path), cache, config, workers)
+    n_games = len({e.game_id for e in episodes})
+    print(
+        f"building {len(episodes)} decisions from {n_games} games of {args.player} "
+        f"({config}, {workers} engine workers)",
+        flush=True,
+    )
+    t = time.perf_counter()
+    try:
+        analyses = builder.analyze(episodes, progress=True)
+    except KeyboardInterrupt:
+        print("interrupted: finished chunks are cached; rerun to resume", file=sys.stderr)
+        return 130
+    finally:
+        builder.close()
+        cache.close()
+    took = time.perf_counter() - t
+    forced = sum(a.engine is None for a in analyses)
+    in_live = sum(a.actual_in_live for a in analyses)
+    no_clock = sum(a.episode.clock_self_s is None for a in analyses)
+    elo_src: dict[str, int] = {}
+    for a in analyses:
+        elo_src[a.episode.self_elo_source] = elo_src.get(a.episode.self_elo_source, 0) + 1
+    n = len(analyses)
+    print(f"done in {took:.1f}s ({n / took:.0f} decisions/s)")
+    print(f"  forced (single legal move): {forced}")
+    print(f"  actual move inside live candidate set: {in_live / n:.3f}")
+    print(f"  missing clock: {no_clock / n:.3f}   self-elo source: {elo_src}")
+    print(
+        f"  cache hits/misses: prior {cache.hits['prior']}/{cache.misses['prior']}, "
+        f"engine {cache.hits['engine']}/{cache.misses['engine']}"
+    )
+    if args.export:
+        with open(args.export, "w") as f:
+            for a in analyses:
+                f.write(json.dumps(episode_record(a)) + "\n")
+        print(f"  exported {n} records to {args.export}")
+    return 0
+
+
+def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
+    from pco.analysis.stockfish import StockfishEvaluator
+    from pco.decisions.analysis import AnalysisConfig
+    from pco.decisions.cache import AnalysisCache
+    from pco.evaluation.report import EvalConfig, format_report, run_evaluation
+    from pco.evaluation.splits import SplitSpec
+    from pco.priors.maia3 import Maia3Prior
+
+    conn = connect(settings.db_path)
+    if conn.execute("SELECT 1 FROM players WHERE name=?", (args.player,)).fetchone() is None:
+        print(f"error: no player named {args.player!r} (see `pco games`)", file=sys.stderr)
+        return 1
+    config = EvalConfig(
+        split=SplitSpec(val_frac=args.val_frac, test_frac=args.test_frac),
+        analysis=AnalysisConfig(),
+        samples=args.samples,
+        quality=not args.no_quality,
+        seed=args.seed,
+    )
+    prior = Maia3Prior(
+        ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.torch_threads
+    )
+    sf_path = stockfish_binary(settings)
+    workers = args.workers or max(1, min(4, (os.cpu_count() or 2) - 2))
+    cache = AnalysisCache(settings.analysis_cache_path)
+    print(f"evaluating {args.player} (analysis of val/test decisions is cached)", flush=True)
+    try:
+        report = run_evaluation(
+            conn,
+            args.player,
+            prior,
+            lambda: StockfishEvaluator(sf_path),
+            cache,
+            config,
+            workers,
+            args.max_games,
+            progress=True,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        cache.close()
+        conn.close()
+    out = (
+        Path(args.out)
+        if args.out
+        else (
+            settings.reports_dir
+            / f"eval-{args.player}-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.json"
+        )
+    )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, indent=1))
+    print(format_report(report))
+    print(f"\nreport: {out}")
+    return 0
+
+
 def main(argv: list[str] | None = None, http: Http | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pco", description="Personal Chess Opponent")
     parser.add_argument("--home", help="data directory (default: $PCO_HOME or platform data dir)")
@@ -178,6 +347,48 @@ def main(argv: list[str] | None = None, http: Http | None = None) -> int:
     sub.add_parser("doctor", help="check installed assets and run a smoke inference")
     games = sub.add_parser("games", help="summarize imported games per player")
     games.add_argument("--verify", action="store_true", help="replay every stored game")
+
+    play = sub.add_parser("play", help="play against the opponent in your browser (local)")
+    play.add_argument("--port", type=int, default=8765, help="localhost port (0 = any free)")
+    play.add_argument("--elo", type=int, default=1500, help="opponent rating for the prior")
+    play.add_argument(
+        "--temperature",
+        type=float,
+        default=None,
+        help="sampling temperature: 1 = model distribution as is, 0 = argmax "
+        "(default 0.7: matched real human move quality, EXPERIMENTS E2.3)",
+    )
+    play.add_argument("--seed", type=int, help="random seed for reproducible sampling")
+    play.add_argument("--no-browser", action="store_true", help="do not open a browser")
+
+    build = sub.add_parser("build", help="analyze a player's decisions (cached, resumable)")
+    build.add_argument("player", help="local player name (see `pco games`)")
+    build.add_argument("--max-games", type=int, help="only the first N games chronologically")
+    build.add_argument("--k", type=int, default=5, help="max prior candidates per decision")
+    build.add_argument(
+        "--mass", type=float, default=0.95, help="prior mass that stops adding candidates"
+    )
+    build.add_argument(
+        "--nodes", type=int, default=10_000, help="engine nodes for the candidate set"
+    )
+    build.add_argument(
+        "--best-nodes", type=int, default=5_000, help="engine nodes for best-move search"
+    )
+    build.add_argument(
+        "--workers", type=int, help="parallel Stockfish processes (default: cores-2, max 4)"
+    )
+    build.add_argument("--export", help="write one JSON record per decision to this file")
+
+    ev = sub.add_parser("eval", help="evaluate move predictors on held-out future games")
+    ev.add_argument("player", help="local player name (see `pco games`)")
+    ev.add_argument("--max-games", type=int, help="only the first N games chronologically")
+    ev.add_argument("--val-frac", type=float, default=0.1, help="validation share of games")
+    ev.add_argument("--test-frac", type=float, default=0.2, help="test share (most recent games)")
+    ev.add_argument("--samples", type=int, default=2, help="sampled moves per position (quality)")
+    ev.add_argument("--no-quality", action="store_true", help="skip the sampled-quality sweep")
+    ev.add_argument("--seed", type=int, default=0)
+    ev.add_argument("--workers", type=int, help="parallel Stockfish processes")
+    ev.add_argument("--out", help="report path (default: $PCO_HOME/reports/eval-*.json)")
 
     imp = sub.add_parser("import", help="import games (safe to repeat)").add_subparsers(
         dest="source", required=True
@@ -201,6 +412,12 @@ def main(argv: list[str] | None = None, http: Http | None = None) -> int:
             return cmd_import(settings, args, http or UrllibHttp())
         if args.command == "games":
             return cmd_games(settings, args.verify)
+        if args.command == "play":
+            return cmd_play(settings, args)
+        if args.command == "build":
+            return cmd_build(settings, args)
+        if args.command == "eval":
+            return cmd_eval(settings, args)
         return {"setup": cmd_setup, "doctor": cmd_doctor}[args.command](settings)
     except (AssetError, SchemaError) as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -60,3 +60,7 @@ class HumanPrior(Protocol):
     def predict(self, requests: Sequence[PriorRequest]) -> list[MoveDistribution]:
         """Batched inference. Raises PriorError for positions without legal moves."""
         ...
+
+    def input_key(self, request: PriorRequest) -> str:
+        """Deterministic description of every input the output depends on (for caching)."""
+        ...

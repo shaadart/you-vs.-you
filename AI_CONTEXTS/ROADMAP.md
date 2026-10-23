@@ -5,15 +5,15 @@ only when its acceptance criteria have been verified (see PROGRESS.md for eviden
 Iteration scope and acceptance come from `docs/MASTER_SPEC.md` §5. The adaptations
 below are justified by Iteration 0 findings.
 
-**Current iteration: 2 (PENDING, next to start).**
+**Current iteration: 5 (PENDING, next to start).**
 
 | # | Iteration | Status | Depends on |
 |---|---|---|---|
 | 0 | Repository assessment, feasibility, foundation | COMPLETED | — |
 | 1 | Game import and data foundation | COMPLETED | 0 |
-| 2 | Playable chess core and human prior | PENDING | 0 (prior adapter exists) |
-| 3 | Decision episodes, features, analysis | PENDING | 1, 2 |
-| 4 | Evaluation framework and baselines | PENDING | 3 |
+| 2 | Playable chess core and human prior | COMPLETED | 0 |
+| 3 | Decision episodes, features, analysis | COMPLETED | 1, 2 |
+| 4 | Evaluation framework and baselines | COMPLETED | 3 |
 | 5 | Personalized move selection V1 | PENDING | 4 |
 | 6 | Context, temporal behavior, incremental learning | PENDING | 5 |
 | 7 | Product integration, optimization, release readiness | PENDING | 6 |
@@ -49,41 +49,73 @@ Deferred, on purpose: a re-normalize command from raw data (needed only once the
 normalizer changes after release), Chess960 support, and Lichess study or
 broadcast import.
 
-## 2 — Playable core and human prior — PENDING
+## 2 — Playable core and human prior — COMPLETED
 
-Scope: a game session (board state, legality, termination including
-threefold/50-move/insufficient material), an opponent interface (`choose_move`)
-implemented first by `PriorOpponent(Maia3Prior)` with temperature sampling, and a
-minimal local UI.
-UI decision (to confirm at start): a localhost single page served by the stdlib HTTP
-server with an inline-SVG board and no CDN (works offline), plus a terminal
-fallback for tests. Record latency and memory for real games.
-Acceptance (spec): a complete legal game is playable, outputs are valid, and
-latency and memory are recorded.
+Delivered: `GameSession`, the `Opponent` protocol and `PriorOpponent` (Maia-3 5M,
+temperature sampling, seedable), and the localhost play page plus JSON API
+(`pco play`). Played games are saved as generated PGNs that the importer refuses.
 
-## 3 — Decision episodes, features, analysis — PENDING
+Acceptance, as verified (PROGRESS.md): complete legal games are played through
+the session, the HTTP API and a real-Maia test. The page renders live state
+(headless Firefox screenshot), and its click and promotion logic passes a node
+check. Model outputs are valid: probabilities over legal moves, contract-checked
+per move. CPU inference works in live play, with latency and memory recorded in
+EXPERIMENTS E2.1 (measured under heavy external load; re-measure on an idle
+machine).
 
-Scope: `DecisionEpisode` built only from information available before the move.
-Candidate set = top-K of the prior ∪ the engine's best move ∪ (training only) the
-actual move. Stockfish candidate scores come from node-limited searches cached by
-(position, candidate set, engine id, nodes). Includes clock context, phase and
-basic tactical features. The prior and engine are computed only for the player's
-own moves.
-Budget (E0.2/E0.3): the prior runs at about 190 positions/s (batch 64, 4 threads),
-and Stockfish at 10k nodes costs about 18 ms per position. That is about 15 to 30
-minutes for 100k decisions on one core each, so build incrementally, cache, and
-parallelize engine work across processes. Default engine budget to validate:
-K=5, 10k nodes.
+Deferred, on purpose: clocks and time controls in play, takeback, deriving the
+opponent Elo from the player's games (It. 5), and multiple concurrent games.
 
-## 4 — Evaluation framework and baselines — PENDING
+## 3 — Decision episodes, features, analysis — COMPLETED
 
-Chronological, game-level splits with duplicate-game protection. Metrics:
-top-1/top-k, actual-move NLL, calibration (ECE or reliability), and latency.
-Breakdowns by phase, time control, in-book vs out-of-book, and number of plausible
-moves.
-Baselines: uniform legal; generic Maia-3 at the player's rating; Maia-3 at a
-**fitted Elo** (a one-parameter personalization baseline, cheap and strong); and a
-per-player opening-frequency table blended with the prior.
+Delivered:
+- `DecisionEpisode`, built from pre-move information only.
+- The adaptive live candidate set: prior top moves ∪ engine best.
+- Training-only, separate evaluation of an out-of-set actual move.
+- A cached, resumable, pipelined `DecisionBuilder` with a pool of engine workers.
+- Context and candidate features with missing-data flags (FEATURE_VERSION 1).
+- `pco build PLAYER [--export]`.
+- A faster minimal UCI driver.
+
+Acceptance, as verified (PROGRESS.md):
+- Historical decisions replay consistently: an exact pre-move position per
+  episode (test), on 7,281 real decisions.
+- Analysis is reproducible: a fresh rebuild with different parallelism is
+  byte-identical.
+- Caches hit 100% on rebuild and invalidate on a model id, node budget or schema
+  change (tests).
+- Missing clocks and ratings stay unknown and flagged, and ratings are only
+  carried forward in time.
+- Features respect inference-time availability: a leakage test (truncated game,
+  tampered result and post-move clock give identical episodes) and a label-free
+  live view.
+
+Deferred, on purpose: opening and familiarity features (It. 4 measures opening
+bias first), richer tactical features (add only if It. 5 ablations justify them),
+and repetition-aware engine evaluation.
+
+## 4 — Evaluation framework and baselines — COMPLETED
+
+Delivered: `pco eval PLAYER`, which runs:
+- chronological game-level splits, with a fingerprint and duplicate-game guard
+- predictors over full legal distributions: uniform, generic Maia, Maia+Elo
+  offset, Maia+temperature, and an opening book
+- metrics: NLL, tie-aware top-k, ECE and reliability
+- breakdowns: phase, time class, ply, legal-move count, in/out-of-book, early/late
+  test period
+- a game-clustered bootstrap vs Maia
+- the sampled-quality sweep, with temperature chosen on val
+
+Output is a JSON report.
+
+Acceptance, as verified: reproducible. A cached rerun matched every metric and
+parameter, with fixed splits (fingerprint), seeds and model ids. A test also
+checks determinism, and that `fit` never sees test games. Baselines are recorded
+for two real players with 1,000 games each (EXPERIMENTS E4.1 and E4.2). No
+personalization claim is made.
+
+**Bar for It. 5:** beat `book(maia+elo+T)` overall, and improve **out-of-book**
+NLL/top1 with a CI excluding 0 (memorization alone cannot do that).
 
 ## 5 — Personalized move selection V1 — PENDING
 
@@ -93,7 +125,22 @@ residual conditional logit
 where f is nonzero only on the candidate set and non-candidates keep their prior
 log-probability, so the distribution always covers every legal move. θ uses L2
 regularization toward 0 (that is, toward Maia), and the regularization strength is
-chosen on chronological validation.
+chosen on chronological validation. The profile also stores a fitted **play
+temperature**, chosen for sampled-quality match on validation games (E2.3); this
+is separate from the NLL-optimal temperature used for likelihood scoring.
+
+Inputs from It. 4:
+- **Keep the book as the repertoire component.** The likely structure is
+  `book(residual(maia+elo))`. Fit the residual f_θ so it adds *out-of-book* gains,
+  which is the claim that matters (E4 finding 3). It must implement the
+  `Predictor` protocol to be scored by `pco eval`.
+- Training data needs engine analysis of the train split as well: about 70% of
+  decisions, about 7 min per 1,000 games cold at E3.1 rates. `pco eval` currently
+  analyzes only val+test.
+- The play temperature differed per player (0.7 vs 1.0, E4.1/E4.2). Fit it per
+  profile on val using `quality_matching_temperature`.
+- Personalization success must be reported on the same splits (fingerprints
+  `c3a0cae2ad7e9b7b`, `a9726602c78de4a9`) against the recorded baseline numbers.
 
 ## 6 — Context, temporal, incremental — PENDING
 ## 7 — Product integration and release — PENDING

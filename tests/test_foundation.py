@@ -95,3 +95,18 @@ def test_history_boards_oldest_first_and_bounded():
     assert hist[-1].fen() == board.fen()
     assert all(not b.move_stack for b in hist)
     assert len(history_boards(chess.Board(), limit=8)) == 1
+
+
+def test_parse_uci_info_lines():
+    from pco.analysis.stockfish import MATE_CP, parse_info
+
+    mpv, ev = parse_info("info depth 12 seldepth 18 multipv 2 score cp -37 nodes 9000 pv e7e5 g1f3")
+    assert (mpv, ev.uci, ev.cp, ev.mate, ev.depth) == (2, "e7e5", -37, None, 12)
+    _, mate_for = parse_info("info depth 5 score mate 3 pv d1h5 g7g6")
+    _, mate_against = parse_info("info depth 5 multipv 1 score mate -2 pv a2a3")
+    assert (mate_for.cp, mate_for.mate) == (MATE_CP - 3, 3)
+    assert (mate_against.cp, mate_against.mate) == (-MATE_CP + 2, -2)
+    _, bound = parse_info("info depth 9 score cp 20 lowerbound nodes 10 pv e2e4")
+    assert (bound.uci, bound.cp) == ("e2e4", 20)
+    assert parse_info("info string NNUE evaluation using nn.nnue") is None
+    assert parse_info("info depth 1 currmove e2e4 currmovenumber 1") is None

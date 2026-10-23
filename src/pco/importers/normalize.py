@@ -149,6 +149,8 @@ def normalize_pgn(text: str) -> NormalizedGame:
     if game.errors:
         raise NormalizationError(f"invalid movetext: {game.errors[0]}")
     h = game.headers
+    if h.get("PcoGenerated", "").lower() == "true":  # see pco.play.session.GENERATED_TAG
+        raise NormalizationError("pco-generated game: not human evidence")
     variant = (h.get("Variant") or "Standard").strip().lower()
     board = game.board()
     if variant not in _STANDARD_VARIANTS or board.chess960:
