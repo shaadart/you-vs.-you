@@ -285,3 +285,200 @@ uncommitted owner change to `.gitignore` (ignoring `CLAUDE.md`) was left untouch
 
 **Decisions:** ARCHITECTURE D21–D24; D16 updated with per-player temperature
 evidence.
+
+## 2026-10-23: Iteration 5 (personalized move selection V1): COMPLETED
+
+**Starting state.** The owner committed Iterations 2–4 (`5b4b5f5`) and reported
+that the opponent was playing better at T=0.7.
+
+**Files added**
+- `src/pco/personal/`: `features.py`, `model.py`, `predictor.py`, `profile.py`,
+  `opponent.py`, `__init__.py`.
+- `tests/test_personal.py` (9 tests):
+  - gradient and Hessian vs finite differences, plus convergence
+  - w=0 equals the base, normalization, non-candidate proportions
+  - recovery of a planted preference (held-out ΔNLL < −0.5)
+  - no overfitting to noise
+  - features independent of the actual move
+  - profile round-trip and version guards
+  - live == offline to 1e-9
+  - a complete game vs the PersonalOpponent
+  - prior-mismatch rejection
+
+**Files changed**
+- `evaluation/report.py`: personal predictors, train-split analysis (memoized),
+  out-of-book bootstrap CIs, paired `vs_baseline` comparisons, and an
+  engine-unavailable count.
+- `evaluation/predictors.py`: `book_blend()` extracted. EloOffset raises on a
+  prior mismatch (It. 4).
+- `decisions/episodes.py`: `live_episode()`.
+- `decisions/analysis.py`: `EpisodeAnalysis.engine_error` and `.forced`. The
+  builder survives `UnsupportedPosition`.
+- `decisions/features.py`: `forced` and `engine_error` in the context.
+- `analysis/stockfish.py`: `EngineExited` and `UnsupportedPosition`, with
+  restart-on-EOF.
+- `play/opponent.py`: `MoveChoice.likeness`.
+- `play/server.py` and `index.html`: likeness display and personal labeling; the
+  Elo input is disabled for personal opponents.
+- `config.py`: `profiles_dir`.
+- `cli.py`: `pco train`, `pco play --player`.
+- `scripts/bench_play.py`: `--player`.
+- Tests: `test_evaluation.py` (new predictor set), `test_decisions.py` (engine
+  failure doesn't abort a build), `test_assets_integration.py` (real Stockfish
+  restarts after an unsupported position).
+
+**Validation**
+- `uv run pytest -q`: 120 passed. With an empty home, 108 passed and 12 skipped.
+  ruff is clean and the lock is OK. `pco doctor` passes.
+- Real data (EXPERIMENTS E5.1/E5.2):
+  - `pco eval` on both players, 1,000 games each, on the same splits as E4.
+  - `pco train thibault` (996 games, 431 s).
+  - `pco play --player thibault` served and played through the API, with a
+    headless-Firefox screenshot of the personal UI.
+  - Full-game latency benchmark: p50 ≈50 ms.
+
+**Bugs found and fixed**
+1. Live vs offline distributions differed by 4e-7. Live called `prior.predict`
+   directly, while training used canonical 6-decimal values. Live now uses
+   `prior_distributions`. Found by the exactness test.
+2. Stockfish exits on a seven-queen "From Position" start (real data). One
+   position aborted a 7-minute build. Engine failures are now per-position, with
+   restart.
+3. A race: the EOF arrived before the exit status was readable, so the first
+   restart check missed it. EOF is now the death signal.
+4. `engine is None` conflated forced moves and engine failures. They are now
+   separate (`forced`, `engine_error`).
+5. Two background evaluations once wrote the same log concurrently, from a
+   duplicate launch caused by a zsh word-splitting mistake in the agent's shell
+   command. The final reported runs were rerun cleanly and sequentially.
+
+**Decisions:** ARCHITECTURE D25–D28.
+
+## 2026-10-23: Iteration 6 (context, temporal behavior, incremental learning): COMPLETED
+
+**Owner direction:** keep it optimized, fast and easy to train, and aim for a bot
+that plays in the same style as any given player. The owner also confirmed that
+the T=0.7 opponent played better.
+
+**Files added**
+- `src/pco/personal/drift.py`.
+- `scripts/ablate_personal.py`.
+- Tests in `tests/test_personal.py`:
+  - weighted objective grad/Hessian and warm start
+  - FeatureSpec expansion and v1 compatibility
+  - recency weights
+  - live == offline with context groups
+  - planted drift detected, stable player not flagged across 3 seeds,
+    insufficient data
+- Tests elsewhere: Elo warm-start (`test_evaluation.py`), and exact,
+  history-sensitive prior keys shared by episodes and live boards
+  (`test_assets_integration.py`).
+
+**Files changed**
+- `personal/features.py`: base + context + `GROUPS`/`FeatureSpec`, version 2.
+- `personal/model.py`: weighted objective, spec expansion, warm start.
+- `personal/predictor.py`: joint λ × half-life selection on val, default
+  half-lives {none, 400, 200, 100, 50}.
+- `personal/profile.py`: format 2 (groups, half-life, drift, cache stats); `previous`
+  warm start.
+- `personal/opponent.py`: spec.
+- `evaluation/predictors.py`: coarse-to-fine and warm-start Elo search.
+- `priors/maia3.py`: `input_key` format k2.
+- `decisions/cache.py`: the prior-key format is tracked; only the prior table is
+  cleared on change.
+- `decisions/episodes.py`: unchecked pushes, memoized boards.
+- `cli.py`: `pco train` prints work, recency and drift, and warm-starts from the
+  last profile.
+
+**Validation**
+- `uv run pytest -q`: 127 passed. With an empty home, 114 passed and 13 skipped.
+  ruff is clean and the lock is OK.
+- Real data:
+  - Ablations on 3 players (one new: LonelySheperd, 1,000 games, imported this
+    iteration).
+  - The pre-registered confirmation failed for context features (E6.2).
+  - `pco eval` of the deployable configuration on 3 players (E6.3).
+  - Incremental training measured on a cold cache (E6.4).
+  - A result-neutrality check of the speedups reproduced metrics to 1e-9.
+  - Live play with a format-2 profile: p50 54.5 ms.
+
+**Bugs found and fixed**
+1. Drift detection's first test produced a false positive: it bootstrapped over
+   about 4 validation games. It now needs ≥30 validation games, and the test was
+   rebuilt on a properly sized sampled population.
+2. Earlier tests assumed the fixed 13-point Elo grid. They were updated for the
+   coarse-to-fine search (7 passes, offset 500 reachable).
+
+**Negative results kept** (spec: record unsuccessful approaches): time-control,
+clock-band and opponent-rating interactions showed no gain on any of the 3
+players. Phase interactions helped 1 of 3, and the pre-registered v2 failed on the
+independent player.
+
+**Decisions:** ARCHITECTURE D29–D31.
+
+## 2026-10-24: Owner's own profile trained (between It. 6 and It. 7)
+
+- The owner imported their own accounts (Chess.com plus Lichess, linked to one
+  local player) into the real `$PCO_HOME`: about 9.5k games and 280k own
+  decisions over 5 years. Personal data stays local, and no stats about the owner
+  are recorded here.
+- **Added `pco train --recent N`**: train on only the N most recent dated games
+  (fast, current form). Tested in `test_personal.py`. With `--recent 2000` (about
+  60k decisions) a cold training run took 2,360 s on 4 engine workers (≈44
+  decisions/s analysis with the machine also busy). A warm retrain took 157 s.
+- **Bug fixed: the Elo-offset search could stop on the edge of its range.** The
+  owner's profile fitted +500, which is the coarse-to-fine maximum. Real cause:
+  low Chess.com ratings sit far below Maia's Lichess scale. Both the cold and warm
+  searches now keep stepping outward while the edge improves, up to
+  `MAX_ELO_OFFSET` = ±1200. After the fix, the warm retrain evaluated +600, found
+  it worse, and confirmed +500 as an interior optimum. Tests were updated:
+  `uv run pytest -q` passes 128.
+- Open: per-platform rating offsets. A single offset serves both Chess.com and
+  Lichess games. That's fine when one platform dominates, unmeasured otherwise.
+  This belongs in It. 7.
+
+## 2026-10-24: Iteration 7 (product integration, optimization, release readiness): COMPLETED
+
+**Owner input:** the owner plays mostly on Chess.com, was concerned about a
+1.5-hour full-history training, and likes the opening predictions.
+
+**Files added**
+- `src/pco/presets.py`.
+- `scripts/book_history.py`.
+- Tests in `test_foundation.py` (presets, quickstart validation, doctor summary),
+  `test_decisions.py` (corrupt cache rebuilt), and `test_import.py` (corrupt DB
+  untouched).
+
+**Files changed**
+- `cli.py`:
+  - `quickstart`
+  - `--speed` on build, train and eval
+  - `train` defaults to `--recent 2000`, with `--all`
+  - interrupt handling and a DB-corruption message
+  - the doctor data summary
+  - play at `live_threads`
+- `decisions/cache.py`: quarantine and rebuild of a corrupt cache.
+- `config.py`: `live_threads`.
+- `evaluation/predictors.py`: the Elo search never stops on a range edge (±1200).
+- `personal/profile.py`: `recent_games`.
+- `README.md`: rewritten for release.
+
+**Validation**
+- `uv run pytest -q`: 133 passed. ruff is clean.
+- Real runs:
+  - The E7.1 book experiment.
+  - Preset evals: Lite on 3 players, Deep on 1 (E7.2).
+  - A fresh-home quickstart (E7.3).
+  - The owner's profile trained and retrained (previous entry).
+
+**Bugs found and fixed**
+1. The quickstart decision count was quadratic: it rebuilt a sorted set per
+   episode. Fixed before running.
+2. The quickstart time estimate covered only analysis and underestimated by about
+   1.7×. It now uses the measured total-training factor (0.6).
+3. A test assertion about which Elo offsets get evaluated was wrong: the refine
+   step evaluates both neighbors. Corrected.
+4. Earlier in this session: the Elo search was capped at the grid edge (it found
+   +500 for the owner). Fixed and verified interior.
+
+**Decisions:** ARCHITECTURE D32–D36.

@@ -66,3 +66,16 @@ training a human prior, and strength optimization. "Future Research" items in th
   E0.1). It would fit behind the same `HumanPrior` interface. The project license is not chosen yet;
   the owner should decide before any public release. This does not block local
   development.
+
+## Status (2026-10-24)
+
+The core product is complete through Iteration 7: quickstart → import → train →
+play → eval, local and CPU-only. Measured fidelity:
+- The personal model beats every baseline on held-out future games for 3 of 3
+  evaluated players.
+- The gains beyond the opening book are small (≈1% NLL).
+- Details are in EXPERIMENTS E4–E7.
+
+Open owner decisions:
+- **The project license** (must be AGPL-compatible if distributed with Maia-3).
+- Whether to verify macOS and Windows.

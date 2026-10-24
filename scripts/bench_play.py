@@ -1,8 +1,11 @@
 """Iteration 2 measurement: live move latency and memory over complete games.
 
 Both sides are PriorOpponent(Maia-3 5M) driven through GameSession, exactly the code
-path the play server uses. Games are generated for timing only and are not stored.
+path the play server uses; with --player, both sides are that player's PersonalOpponent
+(prior + live engine analysis + residual + book, no caching). Games are generated for
+timing only and are not stored.
 Usage: uv run python scripts/bench_play.py [--games 10] [--threads 4] [--elo 1500]
+       uv run python scripts/bench_play.py --home DIR --player NAME [--games 5]
 """
 
 import argparse
@@ -27,15 +30,30 @@ def main():
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--elo", type=int, default=1500)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--home", help="PCO_HOME holding the profile (with --player)")
+    ap.add_argument("--player", help="benchmark this player's personal opponent")
     args = ap.parse_args()
 
     rss0 = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
     t = time.perf_counter()
-    prior = Maia3Prior(ensure_asset(load_settings(), MAIA3_5M, offline=True), threads=args.threads)
+    settings = load_settings(args.home)
+    prior = Maia3Prior(ensure_asset(settings, MAIA3_5M, offline=True), threads=args.threads)
     load_s = time.perf_counter() - t
     rng = random.Random(args.seed)
-    white = PriorOpponent(prior, args.elo, rng=rng)
-    black = PriorOpponent(prior, args.elo, rng=rng)
+    if args.player:
+        from pco.analysis.stockfish import StockfishEvaluator
+        from pco.assets import stockfish_binary
+        from pco.personal.opponent import PersonalOpponent
+        from pco.personal.profile import PersonalProfile
+
+        profile = PersonalProfile.latest(settings.profiles_dir, args.player)
+        engines = [StockfishEvaluator(stockfish_binary(settings)) for _ in range(2)]
+        white = PersonalOpponent(profile, prior, engines[0], cache=None, rng=rng)
+        black = PersonalOpponent(profile, prior, engines[1], cache=None, rng=rng)
+        args.elo = profile.elo
+    else:
+        white = PriorOpponent(prior, args.elo, rng=rng)
+        black = PriorOpponent(prior, args.elo, rng=rng)
 
     latencies, plies, results, wall = [], [], {}, time.perf_counter()
     for _ in range(args.games):

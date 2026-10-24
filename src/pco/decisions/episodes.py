@@ -11,6 +11,7 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass
+from functools import lru_cache
 
 import chess
 
@@ -41,11 +42,21 @@ class DecisionEpisode:
     actual_move: str  # the move the player chose: a training label, never an input
 
     def board(self) -> chess.Board:
-        """Decision position, with the recent moves on its stack (history for the prior)."""
-        board = chess.Board(self.root_fen)
-        for uci in self.recent_moves:
-            board.push_uci(uci)
-        return board
+        """Decision position, with the recent moves on its stack (history for the prior).
+
+        Moves come from games whose legality was verified at import (and re-checkable with
+        `pco games --verify`), so they are pushed without re-validation: this is the hot
+        path of building and training (EXPERIMENTS E6.1)."""
+        return _board(self.root_fen, self.recent_moves).copy()
+
+
+@lru_cache(maxsize=65_536)
+def _board(root_fen: str, recent_moves: tuple[str, ...]) -> chess.Board:
+    """Memoized reconstruction (callers get copies, so the cached board is never mutated)."""
+    board = chess.Board(root_fen)
+    for uci in recent_moves:
+        board.push(chess.Move.from_uci(uci))
+    return board
 
 
 def _clock_before(clocks: list | None, ply: int, base: int | None) -> float | None:
@@ -144,3 +155,32 @@ def player_episodes(
         if own is not None:
             carried = own  # only ever flows forward in time
         yield from episodes
+
+
+def live_episode(board: chess.Board, self_elo: int, oppo_elo: int) -> DecisionEpisode:
+    """An episode for a live position (play): same inputs as training, no label or clocks."""
+    b = board.copy()
+    recent: list[str] = []
+    while len(recent) < HISTORY_PLIES and b.move_stack:
+        recent.insert(0, b.pop().uci())
+    return DecisionEpisode(
+        game_id=-1,
+        game_index=-1,
+        ply=len(board.move_stack),
+        color="white" if board.turn == chess.WHITE else "black",
+        platform="live",
+        played_at=None,
+        time_class=None,
+        tc_base_s=None,
+        tc_inc_s=None,
+        self_elo=self_elo,
+        oppo_elo=oppo_elo,
+        self_elo_source="game",
+        oppo_elo_source="game",
+        clock_self_s=None,
+        clock_oppo_s=None,
+        prev_think_s=None,
+        root_fen=b.fen(),
+        recent_moves=tuple(recent),
+        actual_move="",
+    )

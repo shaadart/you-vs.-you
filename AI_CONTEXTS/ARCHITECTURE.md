@@ -26,7 +26,10 @@ src/pco/
   priors/base.py      [impl] HumanPrior protocol, PriorRequest, MoveDistribution (UCI -> logprob over ALL legal moves)
   priors/maia3.py     [impl] Maia3Prior: in-process CPU inference, 8-position history from board.move_stack
   analysis/stockfish.py [impl] Evaluator protocol; StockfishEvaluator = minimal UCI driver: evaluate(candidates), best()
-  cli.py              [impl] `pco setup | doctor | import {pgn,lichess,chesscom} | games [--verify] | play | build | eval`
+  presets.py          [impl] speed presets lite/standard/deep (AnalysisConfig budgets), DEFAULT_SPEED=lite,
+                             DEFAULT_RECENT_GAMES=2000
+  cli.py              [impl] `pco quickstart | setup | doctor | import {pgn,lichess,chesscom} | games [--verify] |
+                             play [--player] | build | eval | train [--speed] [--recent N|--all]`
   storage/db.py       [impl] connect() (WAL, foreign keys) + ordered migrations via schema_version
   storage/migrations.py [impl] schema v1 (raw + normalized layers)
   storage/games.py    [impl] repository: runs, raw records, games, accounts, summary, verify
@@ -50,7 +53,15 @@ src/pco/
   evaluation/metrics.py [impl] NLL/top-k (tie-aware)/ECE+reliability, breakdowns, game-cluster bootstrap
   evaluation/quality.py [impl] sampled-quality match (engine loss of sampled vs actual moves) per temperature
   evaluation/report.py  [impl] run_evaluation() -> JSON report; format_report()
-  personal/           [planned, It.5] residual personalization model, training, artifacts
+  personal/features.py [impl] BASE_FEATURES (23) + CONTEXT (8) + interaction GROUPS; FeatureSpec(groups)
+                             (PERSONAL_FEATURE_VERSION=2); featurize() -> Block (live set only)
+  personal/model.py   [impl] residual conditional logit: stack(spec, weights), objective() (weighted NLL+L2,
+                             grad, Hessian), fit_weights() (Newton + Armijo, warm start), distribution()
+  personal/predictor.py [impl] Residual(base, analyze, spec, half_lives): Predictor; lambda + recency
+                             half-life chosen jointly on val NLL (warm-started lambda path)
+  personal/drift.py   [impl] behavior_drift(): older-half vs newer-half model on recent games (bootstrap CI)
+  personal/profile.py [impl] PersonalProfile (JSON artifact) + train_profile() (90/10 chronological)
+  personal/opponent.py [impl] PersonalOpponent: live prior -> live set -> engine -> residual -> book -> sample
 ```
 
 Key interface contracts:
@@ -117,12 +128,24 @@ Key interface contracts:
      on test.
 
   Reports are deterministic except the `timing` block (test).
+- **PersonalOpponent.distribution(board)** [impl] runs exactly the training pipeline:
+  1. Prior at the profile rating, through `prior_distributions` (canonical
+     precision).
+  2. `prior_candidates` and `analyze_engine` give the live set.
+  3. The base is the prior at rating + offset.
+  4. `featurize`, then the residual `distribution`.
+  5. The book blend.
+
+  A test asserts the live distribution equals the offline `Residual.predict` to
+  1e-9. `choose_move` samples at `profile.play_temperature` and reports
+  `likeness` = P(move)/P(top). If the engine refuses the position, it falls back
+  to prior + book for that move, and that is noted in `MoveChoice.source`.
 - **Play HTTP API** [impl]: `GET /`, `GET /api/state`, `GET /api/pgn`, and
   POST `/api/new {color, elo, temperature}`, `/api/move {uci}`, `/api/opponent`,
   `/api/resign`. The human move and the opponent reply are separate requests, so
   the page shows the human move at once. Errors return 409 with the current state.
 
-## Data flow (first two lines implemented in It. 1–3; the rest planned)
+## Data flow (implemented through It. 5)
 
 ```
 PGN / Lichess / Chess.com ──importer──> raw_games (byte-exact) ──normalize──> games
@@ -168,9 +191,20 @@ diagnostic. Higher layers can be rebuilt from lower ones. The exact DDL is in
    - Features are recomputed from the caches on read, versioned by
      `FEATURE_VERSION`. About 1 KB of cache per decision (E3.1).
 4. **Derived [It. 5+]**
-   - `profiles(id, player_id, model_kind, model_version, train_config JSON,
-     data_fingerprint, artifact_path, metrics JSON, created_at)`.
-     Artifacts are files under `$PCO_HOME/profiles/`.
+   - **[impl, It. 5] Profiles are JSON files only**, at
+     `$PCO_HOME/profiles/<player>/profile-<UTC stamp>.json`. There is no DB table
+     yet (see D25). The newest one is loaded. A profile contains:
+     - weights, feature names and version
+     - prior id and engine id
+     - the analysis config
+     - Elo and Elo offset
+     - lambda and book alpha
+     - the book counts (position → move counts)
+     - the play temperature
+     - a data fingerprint
+     - validation metrics, including the quality sweep
+
+     It is about 2 MB per 1,000 games, mostly the book.
 
 Versioning: a `schema_version` table with ordered SQL migrations. Every cache key
 includes the producer's id and version, so changing a model invalidates its cache
@@ -278,6 +312,75 @@ limit, never required). Planned: a hardware profile (It. 7).
   test games). Moves within a game are dependent, so a per-move CI would be too
   narrow.
 
+- **D25 Profiles are JSON files, not a DB table** (deviation from the It. 0 plan).
+  They are a self-contained, versioned, inspectable artifact, and loading checks
+  the format and feature version. A table becomes worthwhile only when
+  multi-profile management is needed (It. 6/7).
+- **D26 Personalization v1 = residual conditional logit over the live candidate
+  set**, with base = Maia at a fitted Elo offset, plus the opening book on top.
+  - w = 0 is exactly the base. The objective is convex, so Newton converges in a
+    few iterations.
+  - A non-candidate actual move contributes through a fixed "rest" term in the
+    normalizer.
+  - Training artifacts (`separately_evaluated`, `in_live_set`) are never features.
+  - λ is chosen on val NLL. The val curve is nearly flat at small λ, and λ=1e-5
+    (the grid minimum) was chosen twice (E5.1).
+- **D27 Live and offline inference share every step and the canonical prior
+  precision.** This was found by an exactness test: a direct `prior.predict` call
+  live differed by 4e-7 from the 6-decimal canonical values used in training.
+- **D28 Engine failures are per-position.** `StockfishEvaluator` restarts on EOF
+  and raises `UnsupportedPosition`. The builder records `engine_error`, and that
+  decision gets no engine features, is excluded from scoring, and is counted
+  separately from forced moves. `EpisodeAnalysis.forced` now means one legal
+  move. Real trigger: a "From Position" game with seven white queens makes
+  Stockfish 19 exit.
+
+- **D29 Context conditioning is opt-in, recency is selected per player.** Feature
+  groups (time control, clock bands, opponent rating, phase) are expanded
+  vectorized from a per-decision context, so variants cost seconds. A
+  pre-registered cross-player test failed (E6.2), so the default stays v1
+  features. The recency half-life ∈ {none, 400, 200, 100, 50} is chosen on val:
+  it helped the player with the longest history and was not selected for the
+  others.
+- **D30 Behavior-change detection is diagnostic only.** It fits on the older vs
+  newer halves of training and scores both on the newest games, with a
+  game-clustered CI. It requires ≥30 validation games, because bootstrapping few
+  clusters is anti-conservative (caught by a test). It is reported by
+  `pco train` and stored in the profile. It never changes the model by itself;
+  recency weighting is the mechanism that does.
+- **D31 Training-speed decisions (E6.1/E6.3).**
+  1. Stored moves are pushed without re-validation; import already verified them.
+  2. `DecisionEpisode.board()` is memoized and returns copies.
+  3. The Maia-3 `input_key` is the oldest window position's FEN plus the moves
+     since (format `k2`). It is equivalent and needs 1 FEN instead of 8. A
+     format change clears only the prior cache table, never engine results.
+  4. The Elo offset is a coarse-to-fine search: 7 prior passes over val instead
+     of 13.
+
+- **D32 Speed presets change only the analysis budget**: k_max, mass and the
+  node counts. The model, features and training are identical. A profile stores
+  its analysis config, and play reuses it. **Lite is the default**, because all
+  three presets gave the same held-out accuracy (≤0.001 NLL) on three players
+  while Lite is about 2× faster than Standard and about 4–5× faster than Deep
+  (E7.2).
+- **D33 Training defaults to the 2,000 most recent games.** A whole-history
+  opening book was significantly worse (+0.027 NLL), and a recency-weighted one
+  no better (E7.1). The residual already down-weights old games. `--all`
+  remains available.
+- **D34 `pco quickstart` is a thin orchestrator** over setup → import → train
+  (→ play). It reuses the same command functions and estimates total time from
+  the preset's measured throughput × 0.6 (E7.3).
+- **D35 Recovery policy.**
+  - A corrupted *derived* file (the analysis cache) is moved aside automatically
+    and rebuilt.
+  - A corrupted *evidence* file (the game DB) is never modified: pco explains how
+    to restore it or re-import.
+  - An interrupted train or build resumes from the cache.
+  - Network errors abort with a message, and their partial progress is
+    committed.
+- **D36 Live play defaults to 1 torch thread** (`PCO_LIVE_THREADS`). That is
+  fastest at batch 1 (E2.1b). Training keeps `PCO_TORCH_THREADS`.
+
 ## Known limitations
 
 - Play: one game at a time per server, no takeback, no clocks or time control.
@@ -298,6 +401,13 @@ limit, never required). Planned: a hardware profile (It. 7).
   E3.1): roughly 20 min for a 70k-decision history, once, then cached.
 - Elo conditioning feeds chess.com ratings into Lichess-trained Maia-3 unadjusted.
   Rating pools differ, and a fitted Elo (It. 4 baseline) is the planned remedy.
+- Personalization gains are small (≈0.5–1.4% NLL, E5.1/E6). Repertoire (the book)
+  is still the dominant player-specific signal. Context conditioning (time
+  control, clock, opponent rating) showed no reliable gain on three players
+  (E6.1/E6.2), so it is unused by default.
+- Live personal play costs ≈50 ms per move (p50, E5.2): prior plus one engine best
+  search and one set search. Play has no clocks, so time-pressure features are
+  always 0 in live play.
 - The book baseline counts train games only. Validation games are not added
   before scoring test, which slightly understates the book on test.
 - An evaluation of 1,000 games costs about 14 min cold (analysis of val+test plus
@@ -311,5 +421,11 @@ limit, never required). Planned: a hardware profile (It. 7).
   Correspondence games older than that, finishing later, need `--full`.
 - Chess960 and other variants are rejected (stored raw, with a reason). Standard
   games starting from a custom FEN are accepted.
+- Tested only on Linux x86-64. macOS and Windows should work: pure Python, a
+  CPU torch wheel, and Stockfish from PATH or `PCO_STOCKFISH`. That is
+  unverified.
+- One Elo offset per player, even with accounts on several platforms with
+  different rating scales. That is fine when one platform dominates; otherwise
+  it is unmeasured.
 - Only the Linux x86-64 Stockfish build is pinned with a checksum. Other platforms
   need Stockfish on PATH or `PCO_STOCKFISH`.

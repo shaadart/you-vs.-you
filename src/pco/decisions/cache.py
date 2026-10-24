@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import sys
 import threading
 import zlib
 from datetime import UTC, datetime
@@ -19,6 +20,9 @@ from pathlib import Path
 from pco.analysis.stockfish import CandidateEval
 
 CACHE_SCHEMA = 1
+# Prior cache keys embed the prior's input_key format; a new format orphans old rows, so
+# only the (cheap to recompute) prior table is cleared, never the engine table.
+PRIOR_KEY_FORMAT = "k2"
 
 
 def canonical_logprobs(logprobs: dict[str, float]) -> dict[str, float]:
@@ -35,11 +39,28 @@ class AnalysisCache:
     def __init__(self, path: Path | str):
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-        # Shared by engine worker threads; all access goes through self.lock.
-        self.conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
         self.lock = threading.Lock()
         self.hits = {"prior": 0, "engine": 0}
         self.misses = {"prior": 0, "engine": 0}
+        try:
+            self._open(path)
+        except sqlite3.DatabaseError as exc:
+            if str(path) == ":memory:":
+                raise
+            # Derived, reproducible data: set the damaged file aside and start fresh.
+            stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+            moved = Path(f"{path}.corrupt-{stamp}")
+            Path(path).replace(moved)
+            print(
+                f"warning: analysis cache {path} was unreadable ({exc}); moved to {moved}"
+                " and starting a new cache (analysis will be recomputed; no games are lost)",
+                file=sys.stderr,
+            )
+            self._open(path)
+
+    def _open(self, path: Path | str) -> None:
+        # Shared by engine worker threads; all access goes through self.lock.
+        self.conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
         with self.lock:
             self.conn.executescript(
                 """
@@ -58,6 +79,12 @@ class AnalysisCache:
             elif int(row[0]) != CACHE_SCHEMA:  # derived data: safe to rebuild
                 self.conn.executescript("DELETE FROM prior_cache; DELETE FROM engine_cache;")
                 self.conn.execute("UPDATE meta SET v=? WHERE k='schema'", (str(CACHE_SCHEMA),))
+            fmt = self.conn.execute("SELECT v FROM meta WHERE k='prior_key'").fetchone()
+            if fmt is None or fmt[0] != PRIOR_KEY_FORMAT:
+                self.conn.execute("DELETE FROM prior_cache")
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO meta VALUES ('prior_key', ?)", (PRIOR_KEY_FORMAT,)
+                )
             self.conn.commit()
 
     @staticmethod

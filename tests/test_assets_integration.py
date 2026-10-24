@@ -117,3 +117,41 @@ def test_uci_driver_rejects_illegal_candidates_and_reports_dead_engine(stockfish
         sf.proc.wait()
         with pytest.raises(EngineError):
             sf.evaluate(chess.Board(), ["e2e4"], AnalysisLimit(nodes=1_000))
+
+
+def test_engine_survives_an_unsupported_position(stockfish_path):
+    """Stockfish exits on some rule-legal but unreachable positions (seen in real data:
+    a 'From Position' game with seven white queens). The evaluator must restart."""
+    from pco.analysis.stockfish import UnsupportedPosition
+
+    weird = chess.Board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/QQQQKQQQ w kq - 0 1")
+    with StockfishEvaluator(stockfish_path) as sf:
+        with pytest.raises(UnsupportedPosition):
+            sf.best(weird, AnalysisLimit(nodes=2_000))
+        ok = sf.best(chess.Board(), AnalysisLimit(nodes=2_000))  # restarted, still usable
+        assert ok.uci in {m.uci() for m in chess.Board().legal_moves}
+
+
+def test_prior_input_key_is_exact_and_history_sensitive(maia3_prior):
+    a, b = chess.Board(), chess.Board()
+    for san in ["Nf3", "Nf6", "Ng1", "Ng8", "e4"]:  # a 5-move route to the 1.e4 position
+        a.push_san(san)
+    b.push_san("e4")
+    same_pos = PriorRequest(a, 1500, 1500), PriorRequest(b, 1500, 1500)
+    assert a.board_fen() == b.board_fen()
+    assert maia3_prior.input_key(same_pos[0]) != maia3_prior.input_key(
+        same_pos[1]
+    )  # history differs
+    assert maia3_prior.input_key(same_pos[1]) == maia3_prior.input_key(
+        PriorRequest(b.copy(), 1500, 1500)
+    )
+    assert maia3_prior.input_key(same_pos[1]) != maia3_prior.input_key(PriorRequest(b, 1600, 1500))
+    long = chess.Board()
+    for san in ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O", "Be7", "Re1"]:
+        long.push_san(san)
+    from pco.decisions.episodes import live_episode
+
+    ep = live_episode(long, 1500, 1500)  # 7-ply window rebuilt from the episode
+    assert maia3_prior.input_key(PriorRequest(ep.board(), 1500, 1500)) == maia3_prior.input_key(
+        PriorRequest(long, 1500, 1500)
+    )  # training episodes and live boards share cache keys

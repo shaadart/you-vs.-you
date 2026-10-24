@@ -164,6 +164,7 @@ function render() {
 
 function renderPanel() {
   document.getElementById("label").textContent = state.opponent.label;
+  document.getElementById("elo").disabled = !!state.opponent.personal;  // fixed by the profile
   const status = document.getElementById("status");
   if (state.over) status.textContent = `Game over: ${state.over.result} (${state.over.reason.replaceAll("_", " ")})`;
   else if (busy || state.opponent_to_move) status.textContent = state.error ? "Opponent move failed" : "Opponent is thinking…";
@@ -194,11 +195,16 @@ function renderPanel() {
       <td style="width:55%"><div class="bar" style="width:${(t.probability * 100).toFixed(1)}%"></div></td>
       <td class="p">${(t.probability * 100).toFixed(1)}%</td></tr>`).join("");
   const inTop = c.top.some(t => t.uci === c.uci);
+  const personal = state.opponent.personal;
+  const likeness = c.likeness == null ? "" : `<div>Player-likeness: <b>${(c.likeness * 100).toFixed(0)}%</b>
+    of the model's most characteristic move (a model estimate, not the player's intent)</div>`;
   box.innerHTML = `<div>Played <b>${c.san}</b> (model probability ${(c.probability * 100).toFixed(1)}%,
-    ${c.latency_ms} ms)</div><table>${rows}</table>
+    ${c.latency_ms} ms)</div>${personal ? likeness : ""}<table>${rows}</table>
     ${inTop ? "" : `<div class="note">The sampled move was outside the top ${c.top.length}.</div>`}
-    <div class="note">Probabilities come from ${c.source}, a generic human-move model.
-    It is a sample from that distribution, not a judgment of the best move.</div>`;
+    <div class="note">Probabilities come from ${c.source}, ${personal
+      ? "a model trained on the player's own games"
+      : "a generic human-move model"}.
+    The move is a sample from that distribution, not a judgment of the best move.</div>`;
 }
 
 async function api(path, body) {

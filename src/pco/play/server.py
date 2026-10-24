@@ -83,6 +83,7 @@ class PlayApp:
             ],
             "latency_ms": round(choice.latency_ms, 1),
             "source": choice.source,
+            "likeness": choice.likeness,
         }
         self._after_move()
 
@@ -117,6 +118,7 @@ class PlayApp:
             "over": None if over is None else {"result": over.result, "reason": over.reason},
             "opponent": {
                 "label": s.opponent.label,
+                "personal": getattr(s.opponent, "profile", None) is not None,
                 "elo": self.elo,
                 "temperature": self.temperature,
             },

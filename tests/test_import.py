@@ -320,3 +320,14 @@ def test_conflicting_player_is_rejected_before_fetching(tmp_path, capsys):
     http = FakeHttp(LICHESS_ROUTES)
     assert main(["--home", home, "import", "lichess", "alice_l", "--player", "Bob"], http=http) == 1
     assert "belongs to 'Me'" in capsys.readouterr().err and http.calls == []
+
+
+def test_corrupt_game_database_gives_a_clear_error_and_is_left_alone(tmp_path, capsys):
+    home = tmp_path / "home"
+    home.mkdir()
+    db = home / "pco.sqlite3"
+    db.write_bytes(b"garbage" * 500)
+    before = db.read_bytes()
+    assert main(["--home", str(home), "games"]) == 1
+    assert "unreadable" in capsys.readouterr().err
+    assert db.read_bytes() == before  # evidence is never modified automatically

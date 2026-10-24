@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import random
+import sqlite3
 import sys
 import time
 from datetime import UTC, datetime
@@ -24,6 +25,7 @@ from pco.config import Settings, load_settings
 from pco.importers.http import Http, UrllibHttp
 from pco.importers.pipeline import ImportReport, import_records
 from pco.importers.sources import SourceError, chesscom_records, lichess_records, pgn_records
+from pco.presets import DEFAULT_RECENT_GAMES, DEFAULT_SPEED, PRESETS, preset
 from pco.storage import games as repo
 from pco.storage.db import SchemaError, connect
 
@@ -39,12 +41,47 @@ def cmd_setup(settings: Settings) -> int:
     return 0
 
 
+def _print_data_summary(settings: Settings) -> None:
+    from pco.personal.profile import PersonalProfile
+    from pco.presets import PRESETS
+
+    if settings.db_path.exists():
+        conn = connect(settings.db_path)
+        try:
+            for p in repo.player_summary(conn):
+                print(f"player {p['name']}: {p['games']} games ({', '.join(p['accounts'])})")
+        finally:
+            conn.close()
+    for directory in (
+        sorted(settings.profiles_dir.glob("*")) if settings.profiles_dir.exists() else []
+    ):
+        try:
+            prof = PersonalProfile.latest(settings.profiles_dir, directory.name)
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"profile {directory.name}: unusable ({exc})")
+            continue
+        speed = next(
+            (n for n, sp in PRESETS.items() if vars(sp.analysis) == prof.analysis_config), "custom"
+        )
+        print(
+            f"profile {prof.player}: trained {prof.created_at}, speed {speed},"
+            f" play temperature {prof.play_temperature:g}"
+        )
+    cache = settings.analysis_cache_path
+    if cache.exists():
+        print(
+            f"analysis cache: {cache.stat().st_size / 1e6:.0f} MB"
+            " (safe to delete; rebuilt on demand)"
+        )
+
+
 def cmd_doctor(settings: Settings) -> int:
     from pco.analysis.stockfish import AnalysisLimit, StockfishEvaluator
     from pco.priors.base import PriorRequest
     from pco.priors.maia3 import Maia3Prior
 
     print(f"home: {settings.home}")
+    _print_data_summary(settings)
     ok = True
     board = chess.Board()
     for san in ["e4", "e5", "Nf3", "Nc6"]:
@@ -183,22 +220,52 @@ def cmd_play(settings: Settings, args: argparse.Namespace) -> int:
     from pco.priors.maia3 import Maia3Prior
 
     prior = Maia3Prior(
-        ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.torch_threads
+        ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.live_threads
     )
     rng = random.Random(args.seed)
+    cleanup = []
+    if args.player:
+        from pco.analysis.stockfish import StockfishEvaluator
+        from pco.decisions.cache import AnalysisCache
+        from pco.personal.opponent import PersonalOpponent
+        from pco.personal.profile import PersonalProfile
+
+        try:
+            profile = PersonalProfile.latest(settings.profiles_dir, args.player)
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        evaluator = StockfishEvaluator(stockfish_binary(settings))
+        cache = AnalysisCache(settings.analysis_cache_path)
+        cleanup += [evaluator.close, cache.close]
+
+        def make(_elo: int, temp: float):
+            return PersonalOpponent(profile, prior, evaluator, cache, temperature=temp, rng=rng)
+
+        elo, temperature = profile.elo, profile.play_temperature
+        what = f"personal model of {args.player} (profile {profile.created_at})"
+    else:
+
+        def make(elo: int, temp: float):
+            return PriorOpponent(prior, elo, temperature=temp, rng=rng)
+
+        elo, temperature = args.elo, DEFAULT_PLAY_TEMPERATURE
+        what = f"generic {prior.model_id}, not personalized"
     app = PlayApp(
-        lambda elo, temp: PriorOpponent(prior, elo, temperature=temp, rng=rng),
+        make,
         settings.played_dir,
-        elo=args.elo,
-        temperature=DEFAULT_PLAY_TEMPERATURE if args.temperature is None else args.temperature,
+        elo=elo,
+        temperature=temperature if args.temperature is None else args.temperature,
     )
     try:
         server = make_server(app, args.port)
     except OSError as exc:
         print(f"error: cannot listen on 127.0.0.1:{args.port}: {exc}", file=sys.stderr)
+        for close in cleanup:
+            close()
         return 1
     url = f"http://127.0.0.1:{server.server_address[1]}/"
-    print(f"pco play: {url}  (opponent: {prior.model_id}, generic - not personalized yet)")
+    print(f"pco play: {url}  (opponent: {what})")
     print("Ctrl-C to stop.", flush=True)
     if not args.no_browser:
         webbrowser.open(url)
@@ -209,6 +276,158 @@ def cmd_play(settings: Settings, args: argparse.Namespace) -> int:
     finally:
         server.server_close()
         app.inference.shutdown()
+        for close in cleanup:
+            close()
+    return 0
+
+
+def cmd_train(settings: Settings, args: argparse.Namespace) -> int:
+    from pco.analysis.stockfish import StockfishEvaluator
+    from pco.decisions.cache import AnalysisCache
+    from pco.personal.profile import PersonalProfile, train_profile
+    from pco.priors.maia3 import Maia3Prior
+
+    conn = connect(settings.db_path)
+    if conn.execute("SELECT 1 FROM players WHERE name=?", (args.player,)).fetchone() is None:
+        print(f"error: no player named {args.player!r} (see `pco games`)", file=sys.stderr)
+        return 1
+    prior = Maia3Prior(
+        ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.torch_threads
+    )
+    sf_path = stockfish_binary(settings)
+    workers = args.workers or max(1, min(4, (os.cpu_count() or 2) - 2))
+    cache = AnalysisCache(settings.analysis_cache_path)
+    print(f"training a personal profile for {args.player} (analysis is cached)", flush=True)
+    try:
+        previous = PersonalProfile.latest(settings.profiles_dir, args.player)
+    except (FileNotFoundError, ValueError):
+        previous = None  # first profile, or an outdated format: full search
+    try:
+        profile = train_profile(
+            conn,
+            args.player,
+            prior,
+            lambda: StockfishEvaluator(sf_path),
+            cache,
+            workers=workers,
+            progress=True,
+            previous=previous,
+            recent_games=None if args.all else args.recent,
+            config=preset(args.speed).analysis,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print(
+            "\ninterrupted: the analysis finished so far is cached; run the same command"
+            " again to resume",
+            file=sys.stderr,
+        )
+        return 130
+    finally:
+        cache.close()
+        conn.close()
+    path = profile.save(settings.profiles_dir)
+    v = profile.validation
+    print(f"profile: {path}")
+    print(
+        f"  data: {profile.data['games']} games, {profile.data['decisions']} decisions,"
+        f" last game {profile.data['last_game']}"
+    )
+    print(
+        f"  validation (newest 10% of games): NLL {v['model']['nll']:.4f} vs generic Maia"
+        f" {v['generic_maia']['nll']:.4f}; top-1 {v['model']['top1']:.3f} vs"
+        f" {v['generic_maia']['top1']:.3f}"
+    )
+    print(
+        f"  rating {profile.elo} (offset {profile.elo_offset:+d}), regularization"
+        f" {profile.reg_lambda:g}, book alpha {profile.book_alpha:g},"
+        f" play temperature {profile.play_temperature:g}"
+    )
+    c = profile.data.get("cache", {})
+    if c:
+        print(
+            f"  work: {profile.data['train_seconds']:.0f}s; engine searches computed"
+            f" {c['computed'].get('engine', 0)} (cached {c['hits'].get('engine', 0)}),"
+            f" prior evaluations computed {c['computed'].get('prior', 0)}"
+            f" (cached {c['hits'].get('prior', 0)})"
+        )
+    hl = profile.half_life_games
+    print(
+        "  recency: "
+        + (
+            f"recent games weighted (half-life {hl:g} games)"
+            if hl
+            else "all games weighted equally"
+        )
+        + f"; features: v1 + {', '.join(profile.feature_groups) or 'none'}"
+    )
+    drift = v.get("behavior_drift", {})
+    if drift.get("status") in ("change detected", "no clear change"):
+        g = drift["recent_model_nll_gain"]
+        changed = ", ".join(f"{k} {d:+.2f}" for k, d in drift["largest_weight_changes"].items())
+        print(
+            f"  behavior over time: {drift['status']} (newer-half model better on recent games by"
+            f" {g['mean']:+.4f} NLL, 95% CI [{g['ci95'][0]:+.4f}, {g['ci95'][1]:+.4f}]);"
+            f" largest shifts: {changed}"
+        )
+    print("  (held-out *test* claims come from `pco eval`, not from this validation split)")
+    return 0
+
+
+TRAIN_OVERHEAD = 0.6  # measured: total training throughput / analysis throughput (E7.3)
+
+
+def cmd_quickstart(settings: Settings, args: argparse.Namespace, http: Http) -> int:
+    """Chess.com/Lichess account(s) -> assets -> import -> train -> play, in one command."""
+    from pco.decisions.episodes import player_episodes
+
+    accounts = [("chesscom", args.chesscom), ("lichess", args.lichess)]
+    accounts = [(platform, name) for platform, name in accounts if name]
+    if not accounts:
+        print("error: give --chesscom USER and/or --lichess USER", file=sys.stderr)
+        return 2
+    player = args.player or accounts[0][1]
+    print("[1/4] engine and model files")
+    if cmd_setup(settings) != 0:
+        return 1
+    print(f"[2/4] importing games for player {player!r}")
+    for platform, name in accounts:
+        ns = argparse.Namespace(source=platform, username=name, player=player, full=False, max=None)
+        if cmd_import(settings, ns, http) != 0:
+            return 1
+    conn = connect(settings.db_path)
+    try:
+        episodes = list(player_episodes(conn, player))
+    finally:
+        conn.close()
+    dated = sorted({e.game_index for e in episodes if e.played_at})
+    keep = set(dated if args.all else dated[-args.recent :])
+    n_games, n_decisions = len(keep), sum(e.game_index in keep for e in episodes)
+    # whole first training ~ analysis rate x 0.6 (rating fit, temperature sweep; E7.3)
+    minutes = n_decisions / (preset(args.speed).est_decisions_per_s * TRAIN_OVERHEAD) / 60
+    print(
+        f"[3/4] training on {n_games} games ({n_decisions} of your moves), speed {args.speed}:"
+        f" first time about {max(1, round(minutes))} min; later runs only analyze new games"
+    )
+    train_args = argparse.Namespace(
+        player=player, workers=args.workers, recent=args.recent, all=args.all, speed=args.speed
+    )
+    code = cmd_train(settings, train_args)
+    if code != 0:
+        return code
+    print(f"[4/4] ready: play against yourself with\n    uv run pco play --player {player}")
+    if args.play:
+        play_args = argparse.Namespace(
+            player=player,
+            port=8765,
+            elo=1500,
+            temperature=None,
+            seed=None,
+            no_browser=args.no_browser,
+        )
+        return cmd_play(settings, play_args)
     return 0
 
 
@@ -231,8 +450,12 @@ def cmd_build(settings: Settings, args: argparse.Namespace) -> int:
     if not episodes:
         print(f"player {args.player!r} has no decisions to analyze")
         return 0
+    base_cfg = preset(args.speed).analysis
     config = AnalysisConfig(
-        k_max=args.k, mass=args.mass, nodes=args.nodes, best_nodes=args.best_nodes
+        k_max=args.k or base_cfg.k_max,
+        mass=args.mass or base_cfg.mass,
+        nodes=args.nodes or base_cfg.nodes,
+        best_nodes=args.best_nodes or base_cfg.best_nodes,
     )
     prior = Maia3Prior(
         ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.torch_threads
@@ -282,7 +505,6 @@ def cmd_build(settings: Settings, args: argparse.Namespace) -> int:
 
 def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
     from pco.analysis.stockfish import StockfishEvaluator
-    from pco.decisions.analysis import AnalysisConfig
     from pco.decisions.cache import AnalysisCache
     from pco.evaluation.report import EvalConfig, format_report, run_evaluation
     from pco.evaluation.splits import SplitSpec
@@ -294,7 +516,7 @@ def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
         return 1
     config = EvalConfig(
         split=SplitSpec(val_frac=args.val_frac, test_frac=args.test_frac),
-        analysis=AnalysisConfig(),
+        analysis=preset(args.speed).analysis,
         samples=args.samples,
         quality=not args.no_quality,
         seed=args.seed,
@@ -355,25 +577,51 @@ def main(argv: list[str] | None = None, http: Http | None = None) -> int:
         "--temperature",
         type=float,
         default=None,
-        help="sampling temperature: 1 = model distribution as is, 0 = argmax "
-        "(default 0.7: matched real human move quality, EXPERIMENTS E2.3)",
+        help="sampling temperature: 1 = model distribution as is, 0 = argmax (default: the "
+        "profile's fitted value with --player, else 0.7, EXPERIMENTS E2.3/E4)",
     )
     play.add_argument("--seed", type=int, help="random seed for reproducible sampling")
     play.add_argument("--no-browser", action="store_true", help="do not open a browser")
+    play.add_argument("--player", help="play your personal model (see `pco train`)")
+    qs = sub.add_parser("quickstart", help="one command: import your games, train, play")
+    qs.add_argument("--chesscom", help="your Chess.com username")
+    qs.add_argument("--lichess", help="your Lichess username")
+    qs.add_argument("--player", help="local player name (default: the first username)")
+    qs.add_argument(
+        "--speed", choices=sorted(PRESETS), default=DEFAULT_SPEED, help="analysis budget preset"
+    )
+    qs.add_argument("--recent", type=int, default=DEFAULT_RECENT_GAMES)
+    qs.add_argument("--all", action="store_true", help="use your whole game history")
+    qs.add_argument("--workers", type=int, help="parallel Stockfish processes")
+    qs.add_argument("--play", action="store_true", help="open the board when training is done")
+    qs.add_argument("--no-browser", action="store_true", help="with --play: do not open a browser")
+    train = sub.add_parser("train", help="train a personal profile from a player's games")
+    train.add_argument("player", help="local player name (see `pco games`)")
+    train.add_argument(
+        "--speed", choices=sorted(PRESETS), default=DEFAULT_SPEED, help="analysis budget preset"
+    )
+    train.add_argument("--workers", type=int, help="parallel Stockfish processes")
+    train.add_argument(
+        "--recent",
+        type=int,
+        default=DEFAULT_RECENT_GAMES,
+        help=f"train on your N most recent games (default {DEFAULT_RECENT_GAMES}; older games"
+        " did not improve prediction, EXPERIMENTS E7.1)",
+    )
+    train.add_argument("--all", action="store_true", help="use your whole game history")
 
     build = sub.add_parser("build", help="analyze a player's decisions (cached, resumable)")
     build.add_argument("player", help="local player name (see `pco games`)")
+    build.add_argument(
+        "--speed", choices=sorted(PRESETS), default=DEFAULT_SPEED, help="analysis budget preset"
+    )
     build.add_argument("--max-games", type=int, help="only the first N games chronologically")
-    build.add_argument("--k", type=int, default=5, help="max prior candidates per decision")
+    build.add_argument("--k", type=int, help="override: max prior candidates per decision")
     build.add_argument(
-        "--mass", type=float, default=0.95, help="prior mass that stops adding candidates"
+        "--mass", type=float, help="override: prior mass that stops adding candidates"
     )
-    build.add_argument(
-        "--nodes", type=int, default=10_000, help="engine nodes for the candidate set"
-    )
-    build.add_argument(
-        "--best-nodes", type=int, default=5_000, help="engine nodes for best-move search"
-    )
+    build.add_argument("--nodes", type=int, help="override: engine nodes for the candidate set")
+    build.add_argument("--best-nodes", type=int, help="override: engine nodes for best-move search")
     build.add_argument(
         "--workers", type=int, help="parallel Stockfish processes (default: cores-2, max 4)"
     )
@@ -381,6 +629,9 @@ def main(argv: list[str] | None = None, http: Http | None = None) -> int:
 
     ev = sub.add_parser("eval", help="evaluate move predictors on held-out future games")
     ev.add_argument("player", help="local player name (see `pco games`)")
+    ev.add_argument(
+        "--speed", choices=sorted(PRESETS), default=DEFAULT_SPEED, help="analysis budget preset"
+    )
     ev.add_argument("--max-games", type=int, help="only the first N games chronologically")
     ev.add_argument("--val-frac", type=float, default=0.1, help="validation share of games")
     ev.add_argument("--test-frac", type=float, default=0.2, help="test share (most recent games)")
@@ -418,7 +669,19 @@ def main(argv: list[str] | None = None, http: Http | None = None) -> int:
             return cmd_build(settings, args)
         if args.command == "eval":
             return cmd_eval(settings, args)
+        if args.command == "train":
+            return cmd_train(settings, args)
+        if args.command == "quickstart":
+            return cmd_quickstart(settings, args, http or UrllibHttp())
         return {"setup": cmd_setup, "doctor": cmd_doctor}[args.command](settings)
+    except sqlite3.DatabaseError as exc:
+        print(
+            f"error: the game database {settings.db_path} is unreadable ({exc}). It holds your"
+            " imported games, so pco will not modify it: restore a backup, or move it away and"
+            " re-import (platform imports are repeatable).",
+            file=sys.stderr,
+        )
+        return 1
     except (AssetError, SchemaError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

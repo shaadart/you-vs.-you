@@ -30,6 +30,7 @@ class Settings:
     stockfish_path: Path | None  # explicit override; otherwise the installed asset is used
     torch_threads: int
     lichess_token: str | None = None  # optional personal API token (higher rate limit)
+    live_threads: int = 1  # torch threads for live play: 1 is fastest at batch 1 (E2.1b)
 
     @property
     def assets_dir(self) -> Path:
@@ -45,6 +46,11 @@ class Settings:
     def analysis_cache_path(self) -> Path:
         """Prior/engine analysis cache (derived, reproducible, deletable)."""
         return self.cache_dir / "analysis.sqlite3"
+
+    @property
+    def profiles_dir(self) -> Path:
+        """Trained personal profiles (derived; reproducible from games + pinned models)."""
+        return self.home / "profiles"
 
     @property
     def reports_dir(self) -> Path:
@@ -71,4 +77,5 @@ def load_settings(home: str | Path | None = None, env: Mapping[str, str] = os.en
         stockfish_path=Path(sf).expanduser() if sf else None,
         torch_threads=threads,
         lichess_token=env.get("PCO_LICHESS_TOKEN") or None,
+        live_threads=int(env.get("PCO_LIVE_THREADS", "1")),
     )

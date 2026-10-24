@@ -110,3 +110,34 @@ def test_parse_uci_info_lines():
     assert (bound.uci, bound.cp) == ("e2e4", 20)
     assert parse_info("info string NNUE evaluation using nn.nnue") is None
     assert parse_info("info depth 1 currmove e2e4 currmovenumber 1") is None
+
+
+def test_speed_presets_share_the_model_and_differ_only_in_budget():
+    from pco.presets import PRESETS, preset
+
+    assert set(PRESETS) == {"lite", "standard", "deep"}
+    nodes = [preset(n).analysis.nodes for n in ("lite", "standard", "deep")]
+    assert nodes == sorted(nodes)  # monotone budgets
+    assert all(p.est_decisions_per_s > 0 for p in PRESETS.values())
+    with pytest.raises(ValueError, match="unknown speed preset"):
+        preset("turbo")
+
+
+def test_quickstart_requires_an_account(tmp_path, capsys):
+    from pco.cli import main
+
+    assert main(["--home", str(tmp_path), "quickstart"]) == 2
+    assert "--chesscom" in capsys.readouterr().err
+
+
+def test_doctor_summarizes_local_data(tmp_path, capsys):
+    from pathlib import Path
+
+    from pco.cli import _print_data_summary, main
+
+    pgn = Path(__file__).parent / "fixtures" / "games.pgn"
+    main(["--home", str(tmp_path), "import", "pgn", str(pgn), "--username", "Alice"])
+    capsys.readouterr()
+    _print_data_summary(load_settings(tmp_path))
+    out = capsys.readouterr().out
+    assert "player Alice: 4 games" in out

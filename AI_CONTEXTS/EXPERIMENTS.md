@@ -382,3 +382,262 @@ Sampled quality on test (mean cp loss / blunder rate):
 5. NLL-optimal T (0.95–1.05) ≠ quality-matching T (0.7–1.0). The distinction (E2.3)
    is confirmed on held-out data for one of two players.
 6. Calibration is good for all Maia variants (ECE 0.012–0.028).
+
+## E5.1: Personalization v1 on held-out future games (2026-10-23)
+
+Same command, splits and settings as E4 (fingerprints `c3a0cae2ad7e9b7b`,
+`a9726602c78de4a9`, unchanged). New predictors:
+- `residual(maia+elo)`: the residual conditional logit over the live set (23
+  features, ARCHITECTURE D26). It is trained on the train split (23,299 and
+  21,603 decisions), with λ chosen on val from {1e-5, …, 0.1}.
+- `book(residual(maia+elo))`: the opening book on top of it.
+
+The baselines reproduce E4 exactly. ΔNLL is the mean difference with a 95%
+game-clustered bootstrap CI (lower is better).
+
+| | thibault | warpentak |
+|---|---|---|
+| maia NLL / top1 | 1.2322 / 0.589 | 1.5544 / 0.502 |
+| residual NLL / top1 | 1.2194 / 0.592 | 1.5419 / 0.505 |
+| residual vs maia, all | −0.0128 [−0.0159, −0.0097] | −0.0125 [−0.0165, −0.0085] |
+| **residual vs maia, out-of-book** | **−0.0140 [−0.0173, −0.0106]** | −0.0042 [−0.0082, **+0.0002**] |
+| residual vs maia+elo+T (paired), all | −0.0044 [−0.0075, −0.0017] | −0.0111 [−0.0147, −0.0072] |
+| **residual vs maia+elo+T (paired), out-of-book** | **−0.0071 [−0.0102, −0.0041]** | **−0.0068 [−0.0107, −0.0027]** |
+| book(residual) NLL / top1 | **1.1611 / 0.608** | **1.3533 / 0.566** |
+| book(residual) vs book(maia+elo+T) (paired) | −0.0067 [−0.0097, −0.0039] | −0.0056 [−0.0090, −0.0023] |
+| out-of-book top1, maia → residual | 0.584 → 0.587 | 0.525 → 0.529 |
+| chosen λ / Elo offset | 1e-5 / +100 | 1e-5 / 0 |
+| play T chosen on val, book(residual) | 0.8 → test 56 cp / 4.1% (actual 55 / 4.1%) | 0.8 → test 71 cp / 5.7% (actual 77 / 6.3%) |
+
+Fit cost: 47 s and 32 s (featurization dominates), plus train analysis (cold, about
+7 min per 1,000 games; 16 s cached). Prediction cost is under 1 ms per decision on
+top of the cached analysis.
+
+Largest learned weights (descriptive, relative to Maia; not psychological claims):
+- thibault: wp_loss_low_clock −0.95, wp_loss +0.49, piece_pawn −0.36, castle +0.28,
+  captured_value −0.27, check −0.21.
+- warpentak: wp_loss_low_clock −0.49, captured_value +0.48, castle −0.44,
+  promotion +0.42, capture −0.38, recapture −0.26.
+
+**Conclusions (as measured, no stronger)**
+1. **The personalized model is the best predictor for both players.** It
+   significantly beats every baseline, including the strongest
+   (`book(maia+elo+T)`), with paired CIs excluding 0.
+2. **It learns something beyond repertoire.** Out-of-book it beats the tuned prior
+   (maia+elo+T) for both players. Against plain Maia, the out-of-book gain is
+   significant for thibault and borderline for warpentak, whose CI upper bound is
+   +0.0002, so no claim is made there.
+3. **The effect is small:** about 0.5–1.1% of NLL and +0.3–0.4 points top-1
+   out-of-book. Repertoire (the book) remains the dominant player-specific signal,
+   at −0.064 / −0.195 NLL. Larger gains need context (time control, opponent
+   rating, recency; It. 6) or richer models. This is unmeasured.
+4. **The play temperature for the personal model is 0.8 for both**, chosen on val.
+   It reproduces thibault's move quality on test closely, and is slightly too
+   strong for warpentak (71 vs 77 cp).
+5. λ landed at the grid minimum twice, but the val NLL curve is flat there (Δ <
+   0.0002 across 1e-5 … 3e-4), so the result is insensitive to it.
+
+**Incident during the run.** The first train-split analysis of thibault crashed:
+Stockfish 19 exits on a "From Position" start with seven white queens, which is
+legal by the rules and valid per python-chess. Six such games exist (145 plies).
+Fixed by making engine failures per-position (ARCHITECTURE D28). The engine
+first-run race (EOF before exit status) needed a second fix. The final runs
+report 0 engine-unavailable decisions in val/test.
+
+## E5.2: Live personal-opponent latency (2026-10-23)
+
+`scripts/bench_play.py --player thibault`: both sides are the PersonalOpponent of
+thibault's profile, with **no caching** (prior + best search 5k nodes + set search
+10k nodes + residual + book per move). Idle machine (load about 2).
+
+| torch threads | games | plies | p50 | p95 | p99 | max | peak RSS (Python) |
+|---|---|---|---|---|---|---|---|
+| 1 | 6 | 548 | 49.5 ms | 57.3 ms | 69.3 ms | 127.6 ms | 278 MB |
+| 4 | 4 | 320 | 50.4 ms | 66.5 ms | 70.7 ms | 72.4 ms | 272 MB |
+
+The Stockfish processes come on top of that, with a 4 MB hash each. Through the
+HTTP API the first moves took 27–39 ms (some cache hits).
+
+Profile training (`pco train thibault`, 996 games): 431 s, mostly cached analysis
+plus new prior calls at the Elo offset. Profile file: 2.1 MB. Validation (newest
+100 games): NLL 1.160 vs Maia 1.233; top1 0.615 vs 0.590.
+
+## E6.2 PRE-REGISTRATION (written 2026-10-23, before looking at any LonelySheperd ablation result)
+
+Exploratory ablations on thibault and warpentak (E6.1, test splits inspected) suggest:
+- **v2 = v1 + "phase" interaction group + recency weighting**
+- half-life chosen on val from {None, 400, 200, 100, 50, 25} games
+- λ chosen on val
+
+**Confirmatory test:** on `LonelySheperd`, a third Lichess player with a mixed
+blitz/rapid history, imported 2026-10-23 and not used for any design choice, v2
+must beat v1 on the test split with a paired game-clustered 95% CI excluding 0
+(ΔNLL < 0). The other variants are reported as exploratory only. The
+time-control group is of special interest for this player but is not part of the
+claim.
+
+## E6.1: Context and recency ablations (2026-10-23, exploratory for thibault and warpentak)
+
+Script: `scripts/ablate_personal.py --home H PLAYER`.
+- Same 70/10/20 split as `pco eval`, with the base at the val-fitted Elo offset.
+- Features are computed once.
+- Each variant chooses λ ∈ {0.1 … 1e-5} and, where listed, the half-life on val.
+- Test is used only for the paired game-clustered bootstrap vs v1 (the E5
+  residual).
+- v1 reproduces E5.1 exactly (thibault test NLL 1.2194, warpentak 1.5419).
+
+ΔNLL vs v1 on test, overall [95% CI] (out-of-book in parentheses):
+
+| variant | thibault | warpentak |
+|---|---|---|
+| +time_control | +0.0001 [−0.0003, +0.0005] | +0.0000 |
+| +clock | +0.0003 [−0.0004, +0.0012] | −0.0006 [−0.0017, +0.0004] |
+| +opponent | +0.0001 [−0.0000, +0.0002] | +0.0000 |
+| +phase | −0.0013 [−0.0023, −0.0004] (−0.0006), but val worse | **−0.0055 [−0.0076, −0.0033]** (−0.0019) |
+| +all | −0.0008 [−0.0022, +0.0004] | −0.0052 [−0.0073, −0.0030] |
+| v1 + recency | **−0.0031 [−0.0047, −0.0017]** (−0.0035), h=100 | −0.0002, h=400 (out-of-book +0.0008) |
+| +phase + recency | **−0.0044 [−0.0061, −0.0029]** (−0.0042), h=100 | **−0.0059 [−0.0081, −0.0037]** (−0.0009), h=400 |
+| +all + recency | −0.0028 [−0.0048, −0.0007] | −0.0052 |
+
+Fit times: 1.5–4 s per spec without recency; 8–26 s with the 6-point half-life grid;
+up to 70 s for "+all+recency" (59 features). The h=100 optimum for thibault is
+interior; 50 and 25 were not chosen.
+
+## E6.2: Pre-registered confirmation on LonelySheperd: **FAILED**
+
+Pre-registration text is above, written before the result. The player is
+LonelySheperd: Lichess, 1,000 games, 552 blitz / 408 rapid / 40 bullet. Split
+`ce02dba7162fb9df` is 660/93/188 games, with 2 duplicate move sequences dropped.
+The val-chosen Elo offset is +200.
+
+| variant | ΔNLL vs v1 (test) | out-of-book |
+|---|---|---|
+| **v2 = +phase+recency (pre-registered)** | **−0.0010 [−0.0026, +0.0007]**, n.s. | −0.0005 [−0.0022, +0.0012] |
+| +time_control (mixed-TC player) | +0.0005 [−0.0005, +0.0015] | +0.0005 |
+| +clock | +0.0004 | +0.0005 |
+| +opponent | −0.0002 | −0.0001 |
+| v1 + recency | 0 (val chose no weighting) | 0 |
+
+**Conclusions**
+1. The pre-registered claim "v2 > v1" is **not supported** on the independent
+   player. Phase interactions gained on one player of three. The context groups
+   (time control, clock bands, opponent rating) are null on all three, including
+   the mixed blitz/rapid player.
+2. Recency weighting, chosen on val, helped the player with the longest history
+   (thibault, 602 days, h=100) and was effectively not selected for warpentak
+   (316 days, h=400, ≈0) and LonelySheperd (121 days, none). That is consistent
+   with "recency matters when behavior had time to change", but three players
+   can't establish it.
+3. **Decision:** the default model is v1 features plus a val-selected half-life
+   (none allowed). Context groups remain opt-in research options (D29).
+
+## E6.3: Deployable v2 (v1 features + val-chosen recency) via `pco eval` (2026-10-23)
+
+| | thibault | warpentak | LonelySheperd |
+|---|---|---|---|
+| chosen half-life | 100 games | 400 | none |
+| residual vs maia, out-of-book | **−0.0174 [−0.0211, −0.0139]** (E5: −0.0140) | −0.0034 [−0.0076, +0.0012] | **−0.0153 [−0.0216, −0.0092]** |
+| residual vs maia+elo+T (paired), out-of-book | **−0.0106 [−0.0139, −0.0075]** | **−0.0060 [−0.0100, −0.0016]** | **−0.0098 [−0.0140, −0.0051]** |
+| book(residual) NLL / top1 | **1.1580 / 0.609** (E5: 1.1611 / 0.608) | 1.3541 / 0.566 | **1.1282 / 0.625** |
+| book(residual) vs book(maia+elo+T) (paired) | **−0.0098 [−0.0129, −0.0069]** | **−0.0048 [−0.0085, −0.0014]** | **−0.0086 [−0.0124, −0.0048]** |
+
+LonelySheperd baselines (first measured here): maia 1.2258 / 0.595; maia+elo
+(+200) 1.2183; book(maia+elo+T) 1.1367 / 0.619; 834 of 6,750 test decisions
+in-book. The personal model beats the strongest baseline for **all three** players,
+and beats the tuned prior out-of-book for all three. Against plain Maia
+out-of-book it is significant for 2 of 3.
+
+## E6.4: Training speed and incremental updates (2026-10-23)
+
+Profiling a fully cached `train_profile` (thibault, 34k decisions) under cProfile:
+`Maia3Prior.input_key` took about 46% of the time (1.07M FEN generations for
+8-position history keys), `DecisionEpisode.board()` about 24% (272k
+reconstructions with legality re-checks), and the 13-point Elo grid re-ran the
+prior on every new val set. Fixes (D31):
+- unchecked pushes of verified moves
+- a memoized `board()`
+- a 1-FEN `input_key` ("k2" format)
+- a coarse-to-fine Elo search (7 passes)
+- an Elo warm start from the previous profile (3 passes when stable)
+
+Featurization alone went 6.9 s → 3.7 s per 6,000 decisions. **Results are
+unchanged:** `pco eval thibault` after the changes reproduced every predictor's
+test metrics to 1e-9, the Elo offset (+100) and the quality sweep exactly. That
+run took 784 s, because the prior cache had to be rebuilt once under the new key
+format.
+
+Honest incremental test (`h12`, cold cache, Lichess thibault): train on 250
+games, then import the 50 newest games for real and retrain.
+
+| step | wall | engine searches computed / cached | prior evals computed / cached |
+|---|---|---|---|
+| train, 250 games (8,877 decisions), cold | 292 s | 16,879 / 1,757 | 22,809 / 4,034 |
+| **train after +50 new games** (before the warm start: 153 s) | **79 s** | 3,691 / 18,737 | 4,803 / 22,224 (was 9,303) |
+| train again, nothing new | 15 s (was 24 s) | 0 / 22,428 | 0 / 27,027 |
+
+Behavior-change detection on real data (`pco train`, 950 games of thibault):
+"change detected". The newer-half model is better on the newest games by +0.0081
+NLL [+0.0047, +0.0112]. The largest weight shift is engine_best +0.16 (in the
+newer half, the engine's best move is more often the one chosen). This agrees
+with recency helping thibault only. On 250–300-game profiles, the 25–30
+validation games are below the 30-game minimum, so it reports "insufficient data".
+
+## E7.1: Does the opening book benefit from the whole history? (2026-10-24)
+
+Script: `scripts/book_history.py --home H PLAYER --recent 2000`. It ran on the
+owner's own data: about 9.5k games over 5 years. Only engineering conclusions are
+recorded here, no personal statistics.
+- Holdout: the newest 200 games of the 2,000-game window. Alpha is chosen on the
+  older half of the holdout and the variants are reported on the newer half
+  (3,034 decisions).
+- Base: Maia at the val-fitted Elo offset.
+
+| book counts from | ΔNLL vs recent-window book [95% CI] |
+|---|---|
+| recent window (1,800 training games) | reference |
+| whole history, unweighted | **+0.0270 [+0.0204, +0.0332]** (worse) |
+| whole history, half-life 1,000 games | −0.0012 [−0.0033, +0.0009] |
+| whole history, half-life 400 games | −0.0014 [−0.0052, +0.0024] |
+
+In-book coverage of the holdout rose only from 13.3% to 14.3% with the whole
+history. **Conclusion:** old repertoire misleads when openings change over years,
+and recency-weighted old games add nothing measurable. Training defaults to the
+2,000 most recent games (D33). This is one player; it would need confirming on
+more long-history players.
+
+## E7.2: Speed presets: accuracy vs cost (2026-10-24)
+
+`pco eval PLAYER --speed {lite,standard,deep}` on the same splits as E4–E6. The
+prior cache is shared across presets; engine work is recomputed per budget.
+
+| player | final model NLL, lite / standard / deep | paired vs book(maia+elo+T), lite |
+|---|---|---|
+| thibault | 1.1585 / 1.1580 / 1.1587 | −0.0092 [−0.0123, −0.0064] |
+| warpentak | 1.3538 / 1.3541 / — | −0.0051 [−0.0084, −0.0019] |
+| LonelySheperd | 1.1291 / 1.1282 / — | −0.0076 [−0.0113, −0.0040] |
+
+Out-of-book vs maia+elo+T stays significant at Lite for all three: −0.0096,
+−0.0060 and −0.0087. Analysis throughput (4 engine workers):
+
+| preset | budget (k_max, mass, set/best nodes) | decisions/s measured |
+|---|---|---|
+| lite | 3, 0.90, 3k/1.5k | 115–120 (idle machine, thibault); 67–70 (with concurrent load) |
+| standard | 5, 0.95, 10k/5k | 44–58 |
+| deep | 6, 0.97, 30k/15k | 37–39 |
+
+A full Deep eval of thibault took 2,575 s, vs 417 s for Lite (both with the prior
+already cached). **Conclusion:** deeper analysis doesn't improve imitation
+accuracy for this model, so **Lite is the default** (D32). Standard and Deep remain
+available. The quality-sweep cp numbers shift slightly with depth, because the
+engine reference changes; the chosen play temperature stayed at 0.8.
+
+## E7.3: Onboarding run, time estimate, Lite live latency (2026-10-24)
+
+- `pco quickstart --lichess warpentak --recent 300` into an empty home took 352 s
+  end to end: setup check, an import of 3,347 games (about 2 min), a Lite training
+  on 9,405 decisions in 209 s, and the ready message.
+- Total training throughput is about 0.6× the analysis throughput: 45 vs about 70
+  decisions/s here, and 25 vs about 44 on the owner's 66k-decision Standard run.
+  The quickstart estimate uses that factor.
+- Live latency of a Lite-trained personal opponent (`bench_play.py`, 1 thread, no
+  cache): p50 38.7 ms, p95 50.2 ms, peak RSS 268 MB (Standard: about 50 ms, E5.2).

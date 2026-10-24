@@ -1,96 +1,150 @@
 # Personal Chess Opponent (pco)
 
-Import your chess games → learn how you play → play against yourself.
+**Import your chess games → learn how you play → play against yourself.**
 
-A local-first, CPU-only chess opponent that approximates *your* move-selection
-distribution: a pretrained human-move prior (Maia-3) plus a lightweight learned
-personalization layer, with Stockfish used only as an objective evaluator.
+pco trains a chess opponent that plays the way *you* play: your openings, your
+preferences and tendencies, and roughly your strength and blunder rate. It runs
+entirely on your own computer, on an ordinary CPU, with no GPU and no cloud.
 
-**Status:** Iteration 4 is complete. You can import games, play a *generic*
-human-move model (Maia-3) in your browser, analyze your decisions, and measure how
-well move predictors anticipate your *future* games. Personalization doesn't exist
-yet; see `AI_CONTEXTS/ROADMAP.md`.
+How it works, in one paragraph: [Maia-3](https://github.com/CSSLab/maia3), a neural
+network trained on millions of human games, predicts what a human at your rating
+would play. pco then learns, from your own games, how *your* choices differ from
+that typical human: which kinds of moves you favor or avoid, judged with Stockfish's
+evaluation of the alternatives. It also learns your opening repertoire. The
+opponent samples moves from that personal distribution, at a "temperature" fitted
+so its move quality matches yours.
 
-## Setup
+## Quick start (Chess.com and/or Lichess)
 
-Requires [uv](https://docs.astral.sh/uv/). uv installs Python 3.12 and CPU-only PyTorch.
-
-```sh
-uv sync                 # create .venv with all dependencies
-uv run pco setup        # download and verify Maia-3 weights (21 MB) and Stockfish 19
-uv run pco doctor       # smoke-test the prior and the engine
-uv run pytest           # tests; asset-dependent tests skip if `pco setup` was not run
-```
-
-## Importing your games
-
-Imports are safe to repeat. Games already stored are skipped, and account imports
-fetch only what's new since the last complete import.
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/), which
+installs the right Python and CPU-only PyTorch for you.
 
 ```sh
-uv run pco import pgn my_games.pgn --username MyName   # any PGN, from any source
-uv run pco import lichess MyLichessName                 # public games via the Lichess API
-uv run pco import chesscom MyChesscomName               # public games via the Chess.com API
-uv run pco games --verify                               # summary, plus a replay check of every game
+git clone <this repository> && cd <repository>
+uv sync
+uv run pco quickstart --chesscom YOUR_CHESSCOM_NAME --lichess YOUR_LICHESS_NAME --play
 ```
 
-Use `--player Me` on each import to link several accounts to one person. Imported
-data stays local in `$PCO_HOME/pco.sqlite3`. Only standard chess is imported;
-Chess960 and other variants are skipped, and the reason is reported.
+`quickstart` runs four steps:
+1. It downloads and checksum-verifies the model (21 MB) and Stockfish 19 (Linux
+   x86-64; see Troubleshooting for other systems).
+2. It imports your public games. Both accounts are linked to one local player.
+3. It trains on your 2,000 most recent games, with progress and an upfront time
+   estimate.
+4. It opens the board in your browser.
 
-All local state (assets, database, caches) lives under `$PCO_HOME`, which defaults to
-`~/.local/share/pco` on Linux. Other variables are `PCO_STOCKFISH` (path to an
-existing Stockfish binary), `PCO_TORCH_THREADS`, and `PCO_LICHESS_TOKEN` (optional).
+The first training run analyzes every one of your moves, which takes a while (see
+the speed table). Later runs only analyze new games.
 
-## Playing
+Afterwards:
 
 ```sh
-uv run pco play                       # opens http://127.0.0.1:8765/ in your browser
-uv run pco play --elo 1800 --seed 7   # opponent rating; a fixed seed makes sampling reproducible
+uv run pco play --player YOUR_CHESSCOM_NAME      # play against yourself again
+uv run pco import chesscom YOUR_CHESSCOM_NAME    # fetch new games...
+uv run pco train YOUR_CHESSCOM_NAME              # ...and update your opponent (incremental)
+uv run pco doctor                                # check setup, data, profiles
 ```
 
-The opponent samples moves from Maia-3's human-move distribution at the chosen
-rating. The default temperature is 0.7. At temperature 1 it measurably blunders more
-often than real players of that rating, while 0.7 matched their move quality (see
-`AI_CONTEXTS/EXPERIMENTS.md`, E2.3). At 0 it always plays its most likely move,
-like the Lichess Maia bots. It is not yet personalized to you. The server listens on 127.0.0.1 only. Finished games are
-saved to `$PCO_HOME/played/` and tagged as generated, so they are never imported
-as your games.
+## Speed presets
 
-## Analyzing your decisions
+`--speed` sets how much analysis each of your moves gets: how many alternative
+moves are considered, and how deeply Stockfish checks them. The learned model is
+the same under every preset. Play uses the preset your profile was trained with.
+
+| preset | analysis per move | first training, 2,000 games (~60k moves)* | live move | held-out accuracy** |
+|---|---|---|---|---|
+| **lite** (default) | 3 candidates, shallow search | ~20–25 min (estimated) | ~40 ms | same as standard |
+| standard | 5 candidates, 10k-node search | ~40 min (measured) | ~50 ms | reference |
+| deep | 6 candidates, 30k-node search | ~2 h (estimated, ~3× standard) | slower | same as standard |
+
+\* On a 10-core laptop CPU (Intel i5-1235U), with 4 engine processes. Retraining
+after new games only analyzes those games: about a minute for +50 games.
+\** On three players' held-out games, the three presets' final-model likelihoods
+differed by ≤ 0.001 (`AI_CONTEXTS/EXPERIMENTS.md`, E7.2). Deeper engine analysis did
+not make the imitation more accurate, so lite is the default.
+
+## How well does it imitate you?
+
+- **Measured on future games.** Each player's newest 20% of games were held out,
+  and the model was trained only on earlier ones. On all three players tested
+  (1,000 games each), the personal model predicted their actual moves better than
+  every alternative tried: generic Maia, Maia at a fitted rating, and Maia with
+  their opening book. The differences are statistically significant.
+- **Openings are the strongest personal signal.** In positions you have played
+  before, it predicts your move about 76–83% of the time.
+- **Elsewhere the gain is real but small.** In positions you have never reached,
+  it beats Maia by roughly 1% in likelihood. Most of your "style" outside the
+  opening is still shared with similar-rated humans.
+- **Its strength is matched to you.** Sampled moves lose about as much (in engine
+  terms) as your real moves do.
+- **Time controls and opponent rating didn't help.** Conditioning on them gave no
+  measurable gain, so it isn't used.
+
+Run `uv run pco eval YOUR_NAME` to measure it on your own games. All experiments
+and their exact numbers are in `AI_CONTEXTS/EXPERIMENTS.md`.
+
+## What it is not
+
+- **Not a copy of your mind.** It is a statistical imitation of your observable
+  move choices. The *player-likeness* score shown after each move is a model
+  estimate, not a claim about intent.
+- **Not a strength engine.** It deliberately plays like you, including your mistakes.
+- **No clocks during play.** Your time-pressure habits are learned from your
+  games, but untimed play never triggers them.
+- **Standard chess only.** Chess960 and other variants are skipped at import.
+
+## Privacy
+
+Everything stays on your machine, under `$PCO_HOME` (default `~/.local/share/pco`):
+your games, the analysis cache (safe to delete), and your trained profiles. The
+network is used only to download your public games and the model and engine
+files. The play page is served on `127.0.0.1` only.
+
+## All commands
+
+| command | what it does |
+|---|---|
+| `pco quickstart --chesscom U [--lichess U] [--speed S] [--play]` | everything at once |
+| `pco setup` / `pco doctor` | install and verify assets; check setup, data and profiles |
+| `pco import chesscom U` / `lichess U` / `pgn FILE --username U` | import games; repeatable, only new games are added |
+| `pco games [--verify]` | summary, plus a replay check of every stored game |
+| `pco train NAME [--speed S] [--recent N \| --all]` | train or update your personal opponent |
+| `pco play [--player NAME] [--temperature T]` | play in the browser; without `--player`, a generic Maia opponent |
+| `pco eval NAME` | held-out evaluation report vs baselines |
+| `pco build NAME [--export f.jsonl]` | analyzed decision dataset, for research |
+
+Use `--player NAME` on imports to link several accounts to one person. Settings
+via environment: `PCO_HOME`, `PCO_STOCKFISH` (an existing Stockfish binary),
+`PCO_TORCH_THREADS` (training), `PCO_LIVE_THREADS` (play, default 1) and
+`PCO_LICHESS_TOKEN` (optional, higher rate limit).
+
+## Troubleshooting
+
+- **Stockfish on macOS or Windows:** install Stockfish (e.g. `brew install
+  stockfish`, or the official download) and either put it on `PATH` or set
+  `PCO_STOCKFISH=/path/to/stockfish`. `pco doctor` confirms it works.
+- **Interrupted training or import:** run the same command again. Finished work is
+  cached and resumes.
+- **"analysis cache was unreadable":** it was moved aside automatically and is
+  being rebuilt. Your games are untouched.
+- **"game database is unreadable":** pco never modifies it automatically. Restore a
+  backup, or move it away and re-import (imports are repeatable).
+- **Slow first training:** use `--speed lite`, or a smaller `--recent N`.
+
+## Development
 
 ```sh
-uv run pco build MyName                    # every one of your own moves: Maia-3 probabilities
-                                           # plus Stockfish scores of the plausible alternatives
-uv run pco build MyName --export dec.jsonl # one JSON record per decision, for inspection
+uv run pytest -q                                  # tests (asset tests skip without `pco setup`)
+uv run ruff check . && uv run ruff format --check .
 ```
 
-The build is cached in `$PCO_HOME/cache/`. Rerunning, or resuming after Ctrl-C,
-only computes what is missing, and the cache can be deleted at any time. On a
-10-core laptop it runs at roughly 60 decisions per second.
+Engineering notes, decisions, experiments and handoff for contributors live in
+`AI_CONTEXTS/`. Start with `HANDOFF.md`. The original specification is
+`docs/MASTER_SPEC.md`.
 
-## Measuring how well a model predicts you
+## Licensing
 
-```sh
-uv run pco eval MyName      # trains on your older games, tests on your newest 20%
-```
-
-This prints a table and saves a JSON report under `$PCO_HOME/reports/`.
-
-- Each model is scored on your held-out games: how often it predicts your actual
-  move (top-1/top-3), the log-likelihood of your actual move, and calibration.
-  Confidence intervals come from resampling whole games.
-- Opening positions you have played before are reported separately ("in-book"),
-  so memorized repertoire is not mistaken for understanding your style.
-- The sampled-quality check compares the engine loss of moves *sampled* from each
-  model with your actual moves, and picks the sampling temperature that plays at
-  your level.
-
-## Licensing note
-
-Maia-3 (CSSLab) is AGPL-3.0, and this project imports it in-process. Stockfish is
-GPL-3.0 and runs as a separate process. The project license has not been chosen
-yet; see `AI_CONTEXTS/PROJECT.md`.
-
-Engineering context for contributors and coding agents lives in `AI_CONTEXTS/`.
-Start with `HANDOFF.md`.
+Maia-3 (CSSLab) is AGPL-3.0 and is imported in-process; Stockfish is GPL-3.0 and
+runs as a separate process. If you distribute pco, it must be AGPL-compatible. The
+project's own license has not been chosen yet (owner's decision; see
+`AI_CONTEXTS/PROJECT.md`).

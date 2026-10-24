@@ -5,7 +5,7 @@ only when its acceptance criteria have been verified (see PROGRESS.md for eviden
 Iteration scope and acceptance come from `docs/MASTER_SPEC.md` §5. The adaptations
 below are justified by Iteration 0 findings.
 
-**Current iteration: 5 (PENDING, next to start).**
+**All roadmap iterations (0–7) are COMPLETED.** Further work is "Future Research" or owner decisions (see HANDOFF).
 
 | # | Iteration | Status | Depends on |
 |---|---|---|---|
@@ -14,9 +14,9 @@ below are justified by Iteration 0 findings.
 | 2 | Playable chess core and human prior | COMPLETED | 0 |
 | 3 | Decision episodes, features, analysis | COMPLETED | 1, 2 |
 | 4 | Evaluation framework and baselines | COMPLETED | 3 |
-| 5 | Personalized move selection V1 | PENDING | 4 |
-| 6 | Context, temporal behavior, incremental learning | PENDING | 5 |
-| 7 | Product integration, optimization, release readiness | PENDING | 6 |
+| 5 | Personalized move selection V1 | COMPLETED | 4 |
+| 6 | Context, temporal behavior, incremental learning | COMPLETED | 5 |
+| 7 | Product integration, optimization, release readiness | COMPLETED | 6 |
 
 ---
 
@@ -117,34 +117,87 @@ personalization claim is made.
 **Bar for It. 5:** beat `book(maia+elo+T)` overall, and improve **out-of-book**
 NLL/top1 with a CI excluding 0 (memorization alone cannot do that).
 
-## 5 — Personalized move selection V1 — PENDING
+## 5 — Personalized move selection V1 — COMPLETED
 
-Planned first model (to be validated against the Iteration 4 baselines):
-residual conditional logit
-`log P(m) = log P_maia(m) + f_θ(φ(m, s)) − log Z`,
-where f is nonzero only on the candidate set and non-candidates keep their prior
-log-probability, so the distribution always covers every legal move. θ uses L2
-regularization toward 0 (that is, toward Maia), and the regularization strength is
-chosen on chronological validation. The profile also stores a fitted **play
-temperature**, chosen for sampled-quality match on validation games (E2.3); this
-is separate from the NLL-optimal temperature used for likelihood scoring.
+Delivered:
+- A residual conditional-logit personalization over Maia (+ Elo offset), with the
+  opening book on top.
+- `Residual` as an evaluation predictor, scored by `pco eval` on the It. 4 splits.
+- Paired bootstrap comparisons vs the strongest baselines, and out-of-book CIs.
+- `pco train PLAYER`, which writes a versioned JSON profile with a per-player play
+  temperature.
+- `PersonalOpponent` and `pco play --player NAME`, with a player-likeness score
+  labeled as a model estimate.
+- Per-position engine-failure handling.
 
-Inputs from It. 4:
-- **Keep the book as the repertoire component.** The likely structure is
-  `book(residual(maia+elo))`. Fit the residual f_θ so it adds *out-of-book* gains,
-  which is the claim that matters (E4 finding 3). It must implement the
-  `Predictor` protocol to be scored by `pco eval`.
-- Training data needs engine analysis of the train split as well: about 70% of
-  decisions, about 7 min per 1,000 games cold at E3.1 rates. `pco eval` currently
-  analyzes only val+test.
-- The play temperature differed per player (0.7 vs 1.0, E4.1/E4.2). Fit it per
-  profile on val using `quality_matching_temperature`.
-- Personalization success must be reported on the same splits (fingerprints
-  `c3a0cae2ad7e9b7b`, `a9726602c78de4a9`) against the recorded baseline numbers.
+Acceptance, as verified:
+- The end-to-end workflow ran on real data: import → build → train → play →
+  evaluate (PROGRESS).
+- Probabilities are normalized, and every legal move is covered (tests).
+- Sampling is stochastic, at the fitted temperature.
+- Moves are legal (contract check plus a full-game test).
+- Training is reproducible: deterministic Newton, cached analysis.
+- Profiles persist.
+- Live inference equals offline to 1e-9 (test).
+- The held-out result is reported honestly (EXPERIMENTS E5.1): the personal model
+  beats every baseline for both players. Out-of-book it beats the tuned prior for
+  both, and plain Maia for one, with the other borderline. The effects are small.
 
-## 6 — Context, temporal, incremental — PENDING
-## 7 — Product integration and release — PENDING
+## 6 — Context, temporal, incremental — COMPLETED
 
-Scope as in the spec. Hardware profiles (Lite/Standard/Deep) map to K (candidate
-count), the Stockfish node budget, and possibly the Maia-3 size (5M vs 23M; E0.1
-has the cost data).
+Delivered:
+- Per-decision context (time class, clock bands, rating difference, phase) with
+  opt-in interaction groups (`FeatureSpec`).
+- A recency-weighted objective, with the half-life chosen per player on val.
+- Behavior-change detection: older vs newer halves, a game-clustered CI, reported
+  by `pco train`.
+- Incremental training: only new games are analyzed, the Elo search warm-starts
+  from the previous profile, and the cached vs computed work is printed.
+- Training-speed fixes, verified result-neutral.
+- An ablation harness, `scripts/ablate_personal.py`.
+
+Acceptance, as verified:
+- New games update the profile without rebuilding expensive analysis: +50 games
+  retrain in 79 s vs 292 s cold, and an unchanged retrain takes 15 s (E6.4).
+- Temporal and contextual benefits and limitations are measured: on three players
+  with a pre-registered confirmation that **failed** for the context features,
+  and recency helped one player (E6.1–E6.3).
+- Shared player identity with contextual adaptation: one profile, with context
+  groups available but unused by default because they didn't measurably help.
+- Historical games and profiles are preserved: profiles are timestamped files.
+
+## 7 — Product integration and release — COMPLETED
+
+Delivered:
+- `pco quickstart` (Chess.com/Lichess → assets → import → train → play) with
+  numbered steps and a time estimate.
+- Speed presets lite/standard/deep, measured on 3 players, with Lite the default
+  (E7.2).
+- A training default of the 2,000 most recent games (E7.1), with `--all`.
+- Recovery: a corrupt cache is rebuilt, a corrupt DB is left untouched with
+  guidance, and an interrupted train resumes.
+- `pco doctor` data summary.
+- Live play at 1 torch thread.
+- A release-oriented README: install, quickstart, presets, measured accuracy,
+  limitations, privacy, troubleshooting, licensing.
+
+Acceptance, as verified:
+- The core journey works on the supported CPU hardware: a fresh-home quickstart
+  in 352 s, and the owner's own 9.5k-game import and training (E7.3, PROGRESS).
+- Performance is measured per preset (E7.2, E7.3).
+- Evaluation is reproducible (fixed splits, fingerprints, deterministic reports).
+- Limitations are described honestly (README "What it is not", ARCHITECTURE
+  "Known limitations").
+
+Not done, recorded: macOS and Windows runs are unverified; there are no
+per-platform Elo offsets; the license decision is the owner's.
+
+## Future research (spec §5; only with measurement)
+
+- Per-platform rating offsets for mixed-platform players.
+- Richer residual models (compact embeddings, nonlinear rerankers), judged
+  out-of-book with paired CIs.
+- Clocked play, so learned time-pressure behavior can show live.
+- Behavioral era detection beyond the two-halves test; "Current me vs historical
+  me" profiles from `--recent` windows.
+- Blind human evaluation of real vs generated games.

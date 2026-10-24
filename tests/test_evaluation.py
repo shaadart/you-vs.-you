@@ -16,7 +16,7 @@ from pco.decisions.analysis import AnalysisConfig, DecisionBuilder
 from pco.decisions.cache import AnalysisCache
 from pco.decisions.episodes import player_episodes
 from pco.evaluation.metrics import bootstrap_diff, ece, per_example
-from pco.evaluation.predictors import Book, EloOffset, Temperature, normalize
+from pco.evaluation.predictors import MAX_ELO_OFFSET, Book, EloOffset, Temperature, normalize
 from pco.evaluation.quality import MoveScorer, quality_sweep
 from pco.evaluation.report import EvalConfig, format_report, run_evaluation
 from pco.evaluation.splits import SplitSpec, chronological_split
@@ -193,7 +193,9 @@ def test_elo_offset_picks_validation_optimum_and_ties_prefer_zero(db, episodes):
     ]
     p = EloOffset(prior, cache)
     p.fit(split.train, val)
-    assert p.offset == max(p.grid)
+    # coarse -400..400, refine around +400, then keep stepping outward while it improves
+    assert p.offset == MAX_ELO_OFFSET == max(p.fit_curve)
+    assert min(p.fit_curve) == -400  # never searched below the coarse grid
     flat_prior = FakePrior()  # rating-insensitive: every offset gives the same NLL
     flat_val = DecisionBuilder(flat_prior, FakeEvaluator, cache, AnalysisConfig()).analyze(
         split.val
@@ -255,7 +257,9 @@ def test_report_end_to_end_without_test_leakage(db, monkeypatch):
         def params(self):
             return {}
 
-    monkeypatch.setattr(report_mod, "make_predictors", lambda p, c: [*original(p, c), Spy()])
+    monkeypatch.setattr(
+        report_mod, "make_predictors", lambda p, c, analyze=None: [*original(p, c, analyze), Spy()]
+    )
     cfg = EvalConfig(temperatures=(0.0, 1.0), samples=1, n_boot=200)
 
     def run():
@@ -273,6 +277,8 @@ def test_report_end_to_end_without_test_leakage(db, monkeypatch):
         "maia+elo",
         "maia+elo+T",
         "book(maia+elo+T)",
+        "residual(maia+elo)",
+        "book(residual(maia+elo))",
         "spy",
     }
     assert (
@@ -287,3 +293,17 @@ def test_report_end_to_end_without_test_leakage(db, monkeypatch):
     assert strip(r1) == strip(r2)  # reproducible apart from timing
     text = format_report(r1)
     assert "dNLL vs maia" in text and "sampled-quality match" in text
+
+
+def test_elo_offset_warm_start_searches_locally(db, episodes):
+    split = chronological_split(db, episodes)
+    prior = EloSensitivePrior()
+    cache = AnalysisCache(":memory:")
+    val = [
+        replace(a, episode=replace(a.episode, actual_move=min(a.dist.logprobs)))
+        for a in DecisionBuilder(prior, FakeEvaluator, cache, AnalysisConfig()).analyze(split.val)
+    ]
+    warm = EloOffset(prior, cache, start=200)
+    warm.fit(split.train, val)
+    assert warm.offset == MAX_ELO_OFFSET  # keeps stepping outward while it improves
+    assert min(warm.fit_curve) == 100  # never searched far below the starting point

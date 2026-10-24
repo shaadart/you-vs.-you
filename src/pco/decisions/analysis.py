@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 import chess
 
-from pco.analysis.stockfish import AnalysisLimit, CandidateEval, Evaluator
+from pco.analysis.stockfish import AnalysisLimit, CandidateEval, Evaluator, UnsupportedPosition
 from pco.decisions.cache import AnalysisCache, cache_key, canonical_logprobs
 from pco.decisions.episodes import DecisionEpisode
 from pco.priors.base import HumanPrior, MoveDistribution, PriorRequest
@@ -47,7 +47,12 @@ class EpisodeAnalysis:
     episode: DecisionEpisode
     dist: MoveDistribution
     live_candidates: tuple[str, ...]  # what live inference would consider
-    engine: EngineAnalysis | None  # None for forced positions (one legal move)
+    engine: EngineAnalysis | None  # None for forced positions or when the engine failed
+    engine_error: str | None = None  # why engine analysis is missing (not cached)
+
+    @property
+    def forced(self) -> bool:
+        return len(self.dist.logprobs) == 1
 
     @property
     def actual_in_live(self) -> bool:
@@ -167,9 +172,12 @@ class DecisionBuilder:
         cands = prior_candidates(dist, self.config)
         if board.legal_moves.count() == 1:  # forced: no choice, no engine work
             return EpisodeAnalysis(ep, dist, tuple(cands), None)
-        live, engine = analyze_engine(
-            evaluator, self.cache, board.fen(), cands, self.config, ep.actual_move
-        )
+        try:
+            live, engine = analyze_engine(
+                evaluator, self.cache, board.fen(), cands, self.config, ep.actual_move
+            )
+        except UnsupportedPosition as exc:  # one odd position must not abort a whole build
+            return EpisodeAnalysis(ep, dist, tuple(cands), None, engine_error=str(exc))
         return EpisodeAnalysis(ep, dist, live, engine)
 
     def _analyze_lane(self, items: list, evaluator: Evaluator) -> list[EpisodeAnalysis]:

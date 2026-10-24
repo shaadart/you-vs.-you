@@ -26,6 +26,17 @@ class EngineError(RuntimeError):
     pass
 
 
+class EngineExited(EngineError):
+    """The engine process closed its output (it exited)."""
+
+
+class UnsupportedPosition(EngineError):
+    """The engine refused or died on this position (it was restarted; others still work).
+
+    Example: Stockfish exits on some legal-by-rules but unreachable custom start
+    positions (seven queens in a "From Position" game)."""
+
+
 @dataclass(frozen=True)
 class CandidateEval:
     uci: str
@@ -71,7 +82,14 @@ def parse_info(line: str) -> tuple[int, CandidateEval] | None:
 
 class StockfishEvaluator:
     def __init__(self, binary: Path, threads: int = 1, hash_mb: int = DEFAULT_HASH_MB):
+        self.binary, self.threads, self.hash_mb = binary, threads, hash_mb
+        self._start()
+        # Identity includes every setting that can change results (used in cache keys).
+        self.engine_id = f"{self.name}|threads={threads}|hash={hash_mb}"
+
+    def _start(self) -> None:
         # Threads=1 and a cleared hash per search keep node-limited results deterministic.
+        binary, threads, hash_mb = self.binary, self.threads, self.hash_mb
         try:
             self.proc = subprocess.Popen(
                 [str(binary)],
@@ -92,8 +110,6 @@ class StockfishEvaluator:
         self._send(f"setoption name Hash value {hash_mb}")
         self._ready()
         self.name = name
-        # Identity includes every setting that can change results (used in cache keys).
-        self.engine_id = f"{name}|threads={threads}|hash={hash_mb}"
         self._multipv = 1
 
     def _send(self, command: str) -> None:
@@ -106,8 +122,13 @@ class StockfishEvaluator:
     def _until(self, prefix: str):
         while True:
             line = self.proc.stdout.readline()
-            if not line:
-                raise EngineError(f"engine exited (code {self.proc.poll()}) before {prefix!r}")
+            if not line:  # EOF: the process is exiting; reap it so the code is known
+                try:
+                    code = self.proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+                    code = self.proc.wait()
+                raise EngineExited(f"engine exited (code {code}) before {prefix!r}")
             yield line
             if line.startswith(prefix):
                 return
@@ -118,6 +139,15 @@ class StockfishEvaluator:
             pass
 
     def _search(
+        self, fen: str, nodes: int, moves: Sequence[str], multipv: int
+    ) -> dict[int, CandidateEval]:
+        try:
+            return self._search_once(fen, nodes, moves, multipv)
+        except EngineExited as exc:
+            self._start()  # the engine died on this input: restart for the next position
+            raise UnsupportedPosition(f"engine exited on {fen}: {exc}") from exc
+
+    def _search_once(
         self, fen: str, nodes: int, moves: Sequence[str], multipv: int
     ) -> dict[int, CandidateEval]:
         self._send("ucinewgame")  # clears the hash: result depends only on the inputs

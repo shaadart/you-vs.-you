@@ -39,6 +39,20 @@ def position_key(board: chess.Board) -> str:
     return board.epd()
 
 
+def book_blend(
+    counts: dict[str, Counter] | dict[str, dict[str, int]], key: str, base: LogProbs, alpha: float
+) -> LogProbs:
+    """Dirichlet-smoothed blend of the player's own move counts at `key` with `base`."""
+    seen = counts.get(key)
+    if not seen:
+        return base
+    total = sum(seen.values())
+    return {
+        m: math.log((seen.get(m, 0) + alpha * math.exp(lp)) / (total + alpha))
+        for m, lp in base.items()
+    }
+
+
 class Predictor(Protocol):
     name: str
 
@@ -83,6 +97,9 @@ class GenericPrior:
         return {"model": self.model_id}
 
 
+MAX_ELO_OFFSET = 1200
+
+
 class EloOffset:
     """Prior with the player's rating shifted by one constant, chosen on validation NLL.
 
@@ -90,9 +107,16 @@ class EloOffset:
     scale differences (Maia-3 is trained on Lichess ratings).
     """
 
-    def __init__(self, prior: HumanPrior, cache: AnalysisCache | None, grid: Sequence[int] = ()):
+    def __init__(
+        self,
+        prior: HumanPrior,
+        cache: AnalysisCache | None,
+        grid: Sequence[int] = (),
+        start: int | None = None,
+    ):
         self.prior, self.cache = prior, cache
-        self.grid = list(grid) or list(range(-600, 601, 100))
+        self.grid = list(grid)  # explicit grid; empty = coarse-to-fine search (fit)
+        self.start = start  # previous profile's offset: local search around it (incremental)
         self.offset = 0
         self.fit_curve: dict[int, float] = {}
         self.name = "maia+elo"
@@ -109,9 +133,34 @@ class EloOffset:
         return [d.logprobs for d in prior_distributions(self.prior, self.cache, reqs)]
 
     def fit(self, train, val) -> None:
-        self.fit_curve = {o: mean_nll(self._dists(val, o), val) for o in self.grid}
-        # ties (e.g. an Elo-insensitive prior) prefer no change
-        self.offset = min(self.fit_curve, key=lambda o: (self.fit_curve[o], abs(o)))
+        """Coarse-to-fine by default: offsets -400..400 step 200, then +-100 around the best
+        (7 prior passes over val instead of 13; E6.1). Ties prefer no change."""
+        self.fit_curve = {}
+
+        def score(offsets):
+            for o in offsets:
+                if o not in self.fit_curve:
+                    self.fit_curve[o] = mean_nll(self._dists(val, o), val)
+            return min(self.fit_curve, key=lambda o: (self.fit_curve[o], abs(o)))
+
+        if self.grid:
+            self.offset = score(self.grid)
+            return
+        if self.start is not None:
+            # incremental: check +-100 around the previous offset (3 passes when stable)
+            best = score((self.start - 100, self.start, self.start + 100))
+        else:
+            best = score(range(-400, 401, 200))
+            best = score((best - 100, best + 100))
+        # never stop on the edge of what was searched: keep stepping outward while it
+        # improves (rating pools differ a lot, e.g. low chess.com vs Lichess; E7)
+        while best in (min(self.fit_curve), max(self.fit_curve)) and abs(best) < MAX_ELO_OFFSET:
+            step = 100 if best == max(self.fit_curve) else -100
+            new_best = score((best + step,))
+            if new_best == best:
+                break
+            best = new_best
+        self.offset = best
 
     def predict(self, analyses):
         return self._dists(analyses, self.offset)
@@ -171,14 +220,7 @@ class Book:
         return counts
 
     def _blend(self, a: EpisodeAnalysis, base: LogProbs, alpha: float) -> LogProbs:
-        seen = self.counts.get(position_key(a.episode.board()))
-        if not seen:
-            return base
-        total = sum(seen.values())
-        return {
-            m: math.log((seen.get(m, 0) + alpha * math.exp(lp)) / (total + alpha))
-            for m, lp in base.items()
-        }
+        return book_blend(self.counts, position_key(a.episode.board()), base, alpha)
 
     def fit(self, train, val) -> None:
         self.base.fit(train, val)

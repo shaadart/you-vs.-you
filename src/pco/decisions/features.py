@@ -75,7 +75,7 @@ def context_features(a: EpisodeAnalysis) -> dict[str, Any]:
         "material_balance": material_balance(board, me),
         "in_check": board.is_check(),
         "n_legal": board.legal_moves.count(),
-        "forced": a.engine is None,
+        "forced": a.forced,
         "self_elo": ep.self_elo,
         "oppo_elo": ep.oppo_elo,
         "elo_diff": ep.self_elo - ep.oppo_elo,
@@ -97,6 +97,7 @@ def context_features(a: EpisodeAnalysis) -> dict[str, Any]:
         "missing_self_elo": ep.self_elo_source != "game",
         "missing_oppo_elo": ep.oppo_elo_source != "game",
         "missing_engine": a.engine is None,
+        "engine_error": a.engine_error,
     }
 
 

@@ -61,9 +61,16 @@ class Maia3Prior:
         self.index = {m: i for i, m in enumerate(self.vocab)}
 
     def input_key(self, req: PriorRequest) -> str:
-        """Everything this model's output depends on: the history window and ratings."""
-        fens = "/".join(b.fen() for b in history_boards(req.board))
-        return f"{fens}|{req.self_elo}|{req.oppo_elo}"
+        """Everything this model's output depends on: the history window and ratings.
+
+        The window's oldest position plus the moves since determine all 8 positions
+        exactly, at the cost of one FEN instead of eight (E6.1: FEN generation dominated
+        cached training time)."""
+        b = req.board.copy(stack=HISTORY - 1)
+        moves = []
+        while len(moves) < HISTORY - 1 and b.move_stack:
+            moves.append(b.pop().uci())
+        return f"k2|{b.fen()}|{','.join(reversed(moves))}|{req.self_elo}|{req.oppo_elo}"
 
     def _encode(self, req: PriorRequest) -> torch.Tensor:
         tokens = deque(tokenize_board(b) for b in history_boards(req.board))

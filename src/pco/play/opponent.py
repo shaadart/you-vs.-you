@@ -27,6 +27,9 @@ class MoveChoice:
     top: tuple[tuple[str, float], ...]  # most likely moves, for display
     source: str  # model id that produced the distribution
     latency_ms: float
+    # P(chosen) / P(most likely): how characteristic the move is under the model (1 = its
+    # top choice). A model estimate of player-likeness, not a statement of intent.
+    likeness: float | None = None
 
 
 class Opponent(Protocol):
@@ -78,4 +81,5 @@ class PriorOpponent:
             top=tuple(dist.top(5)),
             source=dist.model_id,
             latency_ms=(time.perf_counter() - t) * 1000,
+            likeness=dist.prob(uci) / dist.top(1)[0][1],
         )

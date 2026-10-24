@@ -243,3 +243,31 @@ def test_real_build_is_reproducible_from_scratch(conn, maia3_prior, stockfish_pa
     assert first == second
     assert all(r["prior_model"].startswith("maia3-5m@") for r in first)
     assert AnalysisLimit(cfg.nodes).nodes == 3_000
+
+
+def test_engine_failure_on_one_position_does_not_abort_the_build(conn):
+    from pco.analysis.stockfish import UnsupportedPosition
+
+    class Flaky(FakeEvaluator):
+        def best(self, board, limit):
+            if board.fullmove_number == 3:
+                raise UnsupportedPosition("engine exited")
+            return super().best(board, limit)
+
+    eps = list(player_episodes(conn, "Alice"))
+    out = DecisionBuilder(FakePrior(), Flaky, AnalysisCache(":memory:")).analyze(eps)
+    failed = [a for a in out if a.engine_error]
+    assert failed and all(a.engine is None and not a.forced for a in failed)
+    assert any(a.engine is not None for a in out)
+    rec = episode_record(failed[0])
+    assert rec["context"]["missing_engine"] and not rec["context"]["forced"]
+
+
+def test_corrupt_cache_is_set_aside_and_rebuilt(tmp_path, capsys):
+    path = tmp_path / "analysis.sqlite3"
+    path.write_bytes(b"this is not a sqlite database" * 100)
+    cache = AnalysisCache(path)
+    cache.put_prior("k", "m", {"e2e4": -0.1})
+    assert cache.get_prior("k") == {"e2e4": -0.1}
+    assert "unreadable" in capsys.readouterr().err
+    assert len(list(tmp_path.glob("analysis.sqlite3.corrupt-*"))) == 1
