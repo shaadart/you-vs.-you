@@ -7,4 +7,4 @@ dist/
 # Local runtime home (models, engines, player data) when PCO_HOME points inside the repo
 /.pco/
 CLAUDE.md
-
+AI_CONTEXTS/
