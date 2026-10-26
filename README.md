@@ -1,192 +1,206 @@
-# Personal Chess Opponent (pco)
+# pco
 
-**Import your chess games → learn how you play → play against yourself.**
+### Play chess against yourself.
 
-pco trains a chess opponent that plays the way *you* play: your openings, your
-preferences and tendencies, and roughly your strength and blunder rate. It runs
-entirely on your own computer, on an ordinary CPU, with no GPU and no cloud.
+<img src="docs/screenshots/home.png" alt="The home screen: a position from your own games, and the move you usually play there." width="100%">
 
-How it works, in one paragraph: [Maia-3](https://github.com/CSSLab/maia3), a neural
-network trained on millions of human games, predicts what a human at your rating
-would play. pco then learns, from your own games, how *your* choices differ from
-that typical human: which kinds of moves you favor or avoid, judged with Stockfish's
-evaluation of the alternatives. It also learns your opening repertoire. The
-opponent samples moves from that personal distribution, at a "temperature" fitted
-so its move quality matches yours.
+You have played thousands of games.
 
-## Quick start (Chess.com and/or Lichess)
+Somewhere inside them is a way of playing that belongs only to you. The openings
+you trust. The piece your hand reaches for first. The castle you keep putting off.
+The mistakes you make when the clock runs low.
 
-You need [uv](https://docs.astral.sh/uv/getting-started/installation/), which
-installs the right Python and CPU-only PyTorch for you.
+pco reads those games and quietly builds someone who plays like that.
+
+Then it sits down across the board from you.
+
+---
+
+## It knows where you've been
+
+The first thing you see is a position from your own games, one you've stood in
+fifty-two times. *Your move.*
+
+Play it, and it tells you: *That's your move here: 26 of 52 times. Your Twin would
+play it too.*
+
+No introduction. No tutorial. Just you, recognized.
+
+## Then you meet yourself
+
+<img src="docs/screenshots/meet.png" alt="YOU, and below it, YOU again: the second one in pixels." width="100%">
+
+You choose which one. The you of today. The you from 2021, who still opened with
+1.e3. The you who only plays bullet.
+
+The first YOU is you. The second, made of pixels, is the one you're about to play.
+
+## The game is quiet
+
+<img src="docs/screenshots/game.png" alt="A game in progress. Beside the board: Your move. That was unusual." width="100%">
+
+Just the board. No evaluation bar, no engine lines, nothing telling you how you're
+doing. You play, it answers, and it answers the way you would.
+
+Every so often, a whisper. *That was unusual.* It means you just played a move you
+almost never play. That's all. It doesn't judge.
+
+## Afterward, it tells you the truth, gently
+
+<img src="docs/screenshots/reflection.png" alt="YOU WON. Cleanly. That was mostly you." width="100%">
+
+Did you win? Did you play like yourself? Were you a little someone else today?
+
+Then it shows you exactly where you and your Twin parted ways:
+
+<img src="docs/screenshots/difference.png" alt="You chose 1.d4. Your Twin would have chosen 1.e3. In this position, you have played e3 248 times, and d4 29 times." width="100%">
+
+This was today's me against the 2021 me. We split on the very first move. I open
+with 1.d4 now. Back then, I played 1.e3 two hundred and forty-eight times. Both
+moves are on the board: mine in amber, my Twin's in blue.
+
+## It paints a portrait, not a score
+
+<img src="docs/screenshots/twin.png" alt="YOU / 2026. You often delay castling. You step back to regroup more than most. Knights are where your hands go first." width="100%">
+
+*You often delay castling. Knights are where your hands go first.*
+
+No personality types, no radar charts. A few sentences about how you actually play,
+each with its evidence written small underneath. It only says what it is sure of.
+
+## It remembers who you were
+
+<img src="docs/screenshots/archive.png" alt="YOU / 2026, YOU / 2025, YOU / 2024: every year, playable." width="100%">
+
+Every year you played enough games is still here, and you can play it again.
+
+## Building your Twin takes a while the first time. It tells you how long
+
+<img src="docs/screenshots/building.png" alt="Rebuilding your Twin. About a minute left. Each stage listed, the current one counting decisions." width="100%">
+
+The first time, it reads every move you've made in your last 2,000 games. On my
+12-core machine that takes about half an hour. After that, only new games are read,
+so a rebuild takes a couple of minutes.
+
+It always tells you what it's doing, how far along it is, and roughly how much time
+is left. You can wander off while it works. It keeps going, and a small dot in the
+corner keeps you company.
+
+---
+
+## Start
+
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/). It brings
+the right Python with it.
 
 ```sh
 git clone <this repository> && cd <repository>
 uv sync
-uv run pco quickstart --chesscom YOUR_CHESSCOM_NAME --lichess YOUR_LICHESS_NAME --play
+uv run pco setup    # once: downloads the human-move model and Stockfish
+uv run pco play     # opens in your browser
 ```
 
-`quickstart` runs four steps:
-1. It downloads and checksum-verifies the model (21 MB) and Stockfish 19 (Linux
-   x86-64; see Troubleshooting for other systems).
-2. It imports your public games. Both accounts are linked to one local player.
-3. It trains on your 2,000 most recent games, with progress and an upfront time
-   estimate.
-4. It opens the board in your browser.
+Then tell it your Chess.com or Lichess name, or give it a PGN file. That's the whole
+setup.
 
-The first training run analyzes every one of your moves, which takes a while (see
-the speed table). Later runs only analyze new games.
+## How it works, without the jargon
 
-Afterwards:
+Three ingredients.
 
-```sh
-uv run pco play --player YOUR_CHESSCOM_NAME      # play against yourself again
-uv run pco import chesscom YOUR_CHESSCOM_NAME    # fetch new games...
-uv run pco train YOUR_CHESSCOM_NAME              # ...and update your opponent (incremental)
-uv run pco doctor                                # check setup, data, profiles
-```
+1. **A model that has watched millions of real human games** ([Maia-3](https://github.com/CSSLab/maia3)).
+   It knows what a person at your rating usually plays.
+2. **Your own games.** They teach it where *you* are different: the moves you
+   favor, the ones you avoid, and your openings, move for move.
+3. **[Stockfish](https://stockfishchess.org)** looks over the moves, so your Twin's
+   mistakes are about as costly as yours. It isn't trying to beat you. It's trying
+   to be you.
 
-## Speed presets
+## How well does it know you?
 
-`--speed` sets how much analysis each of your moves gets: how many alternative
-moves are considered, and how deeply Stockfish checks them. The learned model is
-the same under every preset. Play uses the preset your profile was trained with.
+Honestly:
 
-| preset | analysis per move | first training, 2,000 games (~60k moves)* | live move | held-out accuracy** |
-|---|---|---|---|---|
-| **lite** (default) | 3 candidates, shallow search | ~20–25 min (estimated) | ~40 ms | same as standard |
-| standard | 5 candidates, 10k-node search | ~40 min (measured) | ~50 ms | reference |
-| deep | 6 candidates, 30k-node search | ~2 h (estimated, ~3× standard) | slower | same as standard |
+- **In positions you've played before, very well.** For two of the three players
+  we measured, it guessed their exact move about four times out of five.
+- **Everywhere else, only a little better than a stranger at your level.** Most of
+  how we play outside our openings, it turns out, we share with everyone else.
+- **This was measured on games it had never seen.** Each player's newest games were
+  held back and used only for testing.
 
-\* On a 10-core laptop CPU (Intel i5-1235U), with 4 engine processes. Retraining
-after new games only analyzes those games: about a minute for +50 games.
-\** On three players' held-out games, the three presets' final-model likelihoods
-differed by ≤ 0.001 (`AI_CONTEXTS/EXPERIMENTS.md`, E7.2). Deeper engine analysis did
-not make the imitation more accurate, so lite is the default.
+The exact numbers are in [`AI_CONTEXTS/EXPERIMENTS.md`](AI_CONTEXTS/EXPERIMENTS.md).
 
-## How well does it imitate you?
+## What it isn't
 
-- **Measured on future games.** Each player's newest 20% of games were held out,
-  and the model was trained only on earlier ones. On all three players tested
-  (1,000 games each), the personal model predicted their actual moves better than
-  every alternative tried: generic Maia, Maia at a fitted rating, and Maia with
-  their opening book. The differences are statistically significant.
-- **Openings are the strongest personal signal.** In positions you have played
-  before, it predicts your move about 76–83% of the time.
-- **Elsewhere the gain is real but small.** In positions you have never reached,
-  it beats Maia by roughly 1% in likelihood. Most of your "style" outside the
-  opening is still shared with similar-rated humans.
-- **Its strength is matched to you.** Sampled moves lose about as much (in engine
-  terms) as your real moves do.
-- **Time controls and opponent rating didn't help.** Conditioning on them gave no
-  measurable gain, so it isn't used.
+- **It isn't you.** It imitates what you did, not who you are.
+- **It isn't a strong engine.** It plays like you, mistakes included.
+- **It has no clocks yet.** It learned how you play when your clock runs low, but
+  you won't see that side of it until timed games exist.
+- **Standard chess only.** No Chess960, no variants.
 
-Run `uv run pco eval YOUR_NAME` to measure it on your own games. All experiments
-and their exact numbers are in `AI_CONTEXTS/EXPERIMENTS.md`.
+## Your games stay yours
 
-## The interface
+Everything lives on your computer, in `~/.local/share/pco`. It goes online only when
+you ask it to: to read your *public* games from Chess.com or Lichess, and to
+download the model once. From Settings you can forget your Twin, or forget
+everything.
 
-`pco play` opens the app in your browser (full spec in `docs/DESIGN.md`). It picks
-the player whose Twin was built most recently. With no games yet, it asks for them:
-**Show me your chess** (Chess.com, Lichess or a PGN file), then builds your Twin,
-showing each stage as it goes.
+---
 
-- **Home:** a position from your own recent games that you have faced many times.
-  Make your move, and it shows what you usually play there and what your Twin would
-  play. Before you have games, your first move is compared with players near 1500.
-- **Building your Twin:** the screen says what is happening, how far along it is,
-  and about how long is left. The time comes from the pace so far, your last build,
-  or this machine's past speed, and it says which. The first build is the slowest
-  (about half an hour for 2,000 games on a 12-core machine at Quick; EXPERIMENTS
-  E8.1). Later
-  builds only read new games, unless you change the analysis depth. You can leave
-  the page: the work continues, and a quiet indicator in the top bar follows you.
-- **Play:** "What do you want to do with yourself?" → choose which version of
-  yourself to meet: Current You, Older You, or Bullet/Blitz/Rapid You. The board
-  is the whole screen. Drag, click, or press `/` and type a move (`Nf3`, `O-O`).
-- **Whispers:** at most three short remarks per game, each with its evidence: "New
-  territory." when you leave positions you have played before, "That was unusual."
-  when your move is rare for you.
-- **The reflection:** after the game, how much it was "you" (compared with your
-  real games), where you and your Twin parted ways (both moves drawn on the board,
-  with how often you played each one there), and a replay.
-- **Archive:** each year with enough games, playable as that version of you.
-- **Twin:** a portrait in observations ("You often delay castling."). Only
-  differences with very clear statistical evidence are shown.
-- **Settings:** sources and new games, rebuilding, analysis depth, parallel
-  analyses, whispers and sound, data sizes, and forgetting (your Twin, or
-  everything).
-
-Versions other than Current You keep your current learned style and change the
-openings (that period's own games) and the rating (that period's median). The page
-says so in small print.
-
-## What it is not
-
-- **Not a copy of your mind.** It is a statistical imitation of your observable
-  move choices. Whispers, match shares and observations are model estimates,
-  not claims about intent.
-- **Not a strength engine.** It deliberately plays like you, including your mistakes.
-- **No clocks during play.** Your time-pressure habits are learned from your
-  games, but untimed play never triggers them.
-- **Standard chess only.** Chess960 and other variants are skipped at import.
-
-## Privacy
-
-Everything stays on your machine, under `$PCO_HOME` (default `~/.local/share/pco`):
-your games, the analysis cache (safe to delete), and your trained profiles. The
-network is used only to download your public games and the model and engine
-files. The app is served on `127.0.0.1` only. Settings → Data shows what is
-stored and can forget your Twin or everything (downloaded models stay).
-
-## All commands
+<details>
+<summary><b>Commands</b></summary>
 
 | command | what it does |
 |---|---|
-| `pco quickstart --chesscom U [--lichess U] [--speed S] [--play]` | everything at once |
-| `pco setup` / `pco doctor` | install and verify assets; check setup, data and profiles |
-| `pco import chesscom U` / `lichess U` / `pgn FILE --username U` | import games; repeatable, only new games are added |
-| `pco games [--verify]` | summary, plus a replay check of every stored game |
-| `pco train NAME [--speed S] [--recent N \| --all]` | train or update your personal opponent |
-| `pco play [--player NAME] [--temperature T]` | the app: play your Twin, import, rebuild, look back |
-| `pco eval NAME` | held-out evaluation report vs baselines |
-| `pco build NAME [--export f.jsonl]` | analyzed decision dataset, for research |
+| `pco play` | the app: play yourself, bring in games, rebuild, look back |
+| `pco quickstart --chesscom U --lichess U --play` | everything in one go, from the terminal |
+| `pco setup` / `pco doctor` | download and check the model and Stockfish |
+| `pco import chesscom U` / `lichess U` / `pgn FILE --username U` | bring in games (safe to repeat) |
+| `pco train NAME [--speed lite\|standard\|deep]` | build or update a Twin from the terminal |
+| `pco eval NAME` | measure how well it predicts your newest games |
+| `pco games [--verify]` | what's stored, and a replay check of every game |
 
-Use `--player NAME` on imports to link several accounts to one person. Settings
-via environment: `PCO_HOME`, `PCO_STOCKFISH` (an existing Stockfish binary),
-`PCO_TORCH_THREADS` (training), `PCO_LIVE_THREADS` (play, default 1) and
-`PCO_LICHESS_TOKEN` (optional, higher rate limit).
+Settings via environment: `PCO_HOME` (where data lives), `PCO_STOCKFISH` (your own
+Stockfish), `PCO_TORCH_THREADS`, `PCO_LIVE_THREADS`, `PCO_LICHESS_TOKEN`.
 
-## Troubleshooting
+</details>
 
-- **Stockfish on macOS or Windows:** install Stockfish (e.g. `brew install
-  stockfish`, or the official download) and either put it on `PATH` or set
-  `PCO_STOCKFISH=/path/to/stockfish`. `pco doctor` confirms it works.
-- **Interrupted training or import:** run the same command again. Finished work is
-  cached and resumes.
-- **"analysis cache was unreadable":** it was moved aside automatically and is
-  being rebuilt. Your games are untouched.
-- **"game database is unreadable":** pco never modifies it automatically. Restore a
-  backup, or move it away and re-import (imports are repeatable).
-- **Slow first training:** use `--speed lite`, or a smaller `--recent N`.
+<details>
+<summary><b>If something goes wrong</b></summary>
 
-## Development
+- **macOS or Windows:** install Stockfish (`brew install stockfish`, or the official
+  download) and set `PCO_STOCKFISH=/path/to/stockfish`. `pco doctor` will tell you
+  if it works. Only Linux has been tested so far.
+- **A build or import was interrupted:** start it again. Finished work is kept.
+- **"analysis cache was unreadable":** it has already been set aside and rebuilt.
+  Your games are untouched.
+- **"game database is unreadable":** pco never touches it on its own. Restore a
+  backup, or move it away and import again.
+
+</details>
+
+<details>
+<summary><b>For developers</b></summary>
 
 ```sh
-uv run pytest -q                                  # tests (asset tests skip without `pco setup`)
+uv run pytest -q
 uv run ruff check . && uv run ruff format --check .
 ```
 
-Engineering notes, decisions, experiments and handoff for contributors live in
-`AI_CONTEXTS/`. Start with `HANDOFF.md`. The original specification is
-`docs/MASTER_SPEC.md`.
+The design is in [`docs/DESIGN.md`](docs/DESIGN.md). Engineering notes, decisions,
+experiments and the handoff live in [`AI_CONTEXTS/`](AI_CONTEXTS/); start with
+`HANDOFF.md`.
 
-## Licensing
+</details>
 
-Bundled interface assets: the chess pieces are by Colin M.L. Burnett (GPLv2+, via
-lichess-org/lila); the Newsreader and IBM Plex Mono fonts are SIL OFL 1.1 (license
-texts in `src/pco/play/static/fonts/`).
+<details>
+<summary><b>Credits and licenses</b></summary>
 
-Maia-3 (CSSLab) is AGPL-3.0 and is imported in-process; Stockfish is GPL-3.0 and
-runs as a separate process. If you distribute pco, it must be AGPL-compatible. The
-project's own license has not been chosen yet (owner's decision; see
-`AI_CONTEXTS/PROJECT.md`).
+- [Maia-3](https://github.com/CSSLab/maia3) by CSSLab (AGPL-3.0), and
+  [Stockfish](https://stockfishchess.org) (GPL-3.0), run as a separate program.
+- Chess pieces by Colin M.L. Burnett (GPLv2+, via lichess).
+- Fonts: Newsreader, IBM Plex Mono and Geist Pixel (all SIL OFL 1.1; licenses in
+  `src/pco/play/static/fonts/`).
+
+Anyone distributing pco must keep it AGPL-compatible. pco's own license hasn't
+been chosen yet.
+
+</details>
