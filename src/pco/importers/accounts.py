@@ -35,8 +35,10 @@ def import_account(
     full: bool = False,
     max_games: int | None = None,
     progress: Callable[[ImportReport], None] | None = None,
+    on_month: Callable[[int, int], None] | None = None,
 ) -> tuple[ImportReport, str | None]:
-    """Import a Chess.com/Lichess account incrementally. Returns (report, incremental-since)."""
+    """Import a Chess.com/Lichess account incrementally. Returns (report, incremental-since).
+    `on_month(done, total)` reports Chess.com's monthly archives as they are read."""
     locator = username.lower()
     # Fail fast on an ownership conflict; the account itself is linked by the pipeline only
     # once games actually arrive (no dangling accounts on errors).
@@ -53,7 +55,7 @@ def import_account(
             token=settings.lichess_token,
         )
     elif platform == "chesscom":  # archives are monthly: re-read the month of the last import
-        records = chesscom_records(http, username, since_month=last and last[:7])
+        records = chesscom_records(http, username, since_month=last and last[:7], on_month=on_month)
     else:
         raise ValueError(f"unknown platform {platform!r}")
     report = import_records(

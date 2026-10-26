@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import random
 import statistics
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from pco.analysis.stockfish import Evaluator
@@ -66,8 +66,10 @@ def quality_sweep(
     temperatures: Sequence[float],
     samples: int = 2,
     seed: int = 0,
+    progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
-    """Actual-move quality vs sampled quality per temperature (non-forced positions only)."""
+    """Actual-move quality vs sampled quality per temperature (non-forced positions only).
+    `progress(done, total)` is called after each temperature."""
     pairs = [(d, a) for d, a in zip(dists, analyses, strict=True) if a.engine is not None]
     actual = stats([scorer.loss(a, a.episode.actual_move) for _, a in pairs])
     before = scorer.separate
@@ -83,6 +85,8 @@ def quality_sweep(
         st["cp_loss_gap"] = st["mean_cp_loss"] - actual["mean_cp_loss"]
         st["blunder_gap"] = st["blunder_rate"] - actual["blunder_rate"]
         out["sampled"][str(t)] = st
+        if progress:
+            progress(len(out["sampled"]), len(temperatures))
     lookups = len(pairs) * samples * len(temperatures)
     out["separate_frac"] = (scorer.separate - before) / lookups if lookups else 0.0
     return out

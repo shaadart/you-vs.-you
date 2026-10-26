@@ -9,6 +9,7 @@ requires JSON POST bodies (so other websites cannot drive it with simple form po
 from __future__ import annotations
 
 import json
+import math
 import os
 import random
 import re
@@ -25,15 +26,18 @@ from typing import Any
 
 import chess
 
+from pco.evaluation.predictors import position_key
 from pco.play.jobs import JobBusy, JobRunner
 from pco.play.library import Library, LibraryError, default_workers
 from pco.play.opponent import OpponentError
 from pco.play.session import GameSession, SessionError
-from pco.play.twin import TwinService
+from pco.play.twin import TwinService, numbered, position_id
 from pco.presets import PRESETS
+from pco.priors.base import PriorRequest
 
 MAX_BODY = 64 * 1024 * 1024  # a PGN of a whole career fits comfortably
 FORGET_WORD = "FORGET"
+GLIMPSE_RATING = 1500  # "people" on the home page before you have a Twin
 
 
 def preset_name(config: dict[str, Any]) -> str | None:
@@ -64,6 +68,8 @@ class PlayApp:
         self.jobs = JobRunner()
         self.twin = TwinService(None, None, list, prior, evaluator, cache)
         self.session: GameSession | None = None
+        self._glimpses: dict[int, chess.Board] = {}
+        self._glimpse_id = 0
         self._reset_game()
         self.select(library.pick_player(player))
 
@@ -214,6 +220,7 @@ class PlayApp:
         }
         if self.twin.player:
             out.update(self.twin.summary())
+            out["estimate"] = self.estimate()
         with self.lock:
             s = self.session
             if s is not None and s.over is None and s.board.move_stack:
@@ -313,13 +320,32 @@ class PlayApp:
                 "half_life": p.half_life_games,
             },
             "can_import": lib.http is not None,
+            "estimate": self.estimate(),
             "forget_word": FORGET_WORD,
         }
 
     # ----------------------------------------------------------------- jobs
+    def estimate(self) -> dict[str, Any] | None:
+        """What a build would cost now (shown before you start one)."""
+        player = self.twin.player
+        games = self.twin.games() if player else []
+        if not games:
+            return None
+        return self.library.build_plan(player, games, self.twin.profile)
+
+    def _build(self, job, say, player: str):
+        plan = self.library.build_plan(player, self.library.load_games(player))
+        job.plan = plan["stages"]
+        job.meta.update({k: plan[k] for k in ("first", "rereads", "depth", "basis", "decisions")})
+        return self.library.build(say, player, self.cache)
+
     def start_import(
         self, source: str, username: str | None = None, pgn: str | None = None, build: bool = True
     ):
+        """Returns (job, joined). Work already under way is joined, never duplicated."""
+        running = self.jobs.running()
+        if running is not None:
+            return running, True
         player = self.twin.player
 
         def work(job, say):
@@ -327,24 +353,100 @@ class PlayApp:
             job.result.update(result)  # "4,862 games found." while the build runs
             self.select(result["player"])
             if build and (result["new"] > 0 or not self.twin.has_twin):
-                profile = self.library.build(say, result["player"], self.cache)
+                profile = self._build(job, say, result["player"])
                 self.select(result["player"])
                 result["built"] = profile.created_at
             return result
 
-        return self.jobs.start("import", work)
+        return self.jobs.start("import", work), False
 
     def start_build(self):
+        """Returns (job, joined). Work already under way is joined, never duplicated."""
+        running = self.jobs.running()
+        if running is not None:
+            return running, True
         player = self.twin.player
         if not player:
             raise SessionError("there are no games yet")
 
         def work(job, say):
-            profile = self.library.build(say, player, self.cache)
+            profile = self._build(job, say, player)
             self.select(player)
             return {"player": player, "built": profile.created_at}
 
-        return self.jobs.start("build", work)
+        return self.jobs.start("build", work), False
+
+    # ----------------------------------------------------------------- the home glimpse
+    def glimpse(self) -> dict[str, Any]:
+        """A real position to answer on the home page: one you have faced many times when
+        there is a Twin, else the starting position (answered against people)."""
+        found = self.twin.glimpse(self.rng) if self.twin.has_twin else None
+        board, seen = found if found else (chess.Board(), 0)
+        with self.lock:
+            self._glimpse_id += 1
+            gid = self._glimpse_id
+            self._glimpses[gid] = board
+            for old in [k for k in self._glimpses if k <= gid - 16]:
+                del self._glimpses[old]
+        return {
+            "id": gid,
+            "mode": "yours" if found else "people",
+            "fen": board.fen(),
+            "orientation": "white" if board.turn == chess.WHITE else "black",
+            "last_move": board.move_stack[-1].uci() if board.move_stack else None,
+            "legal": [{"uci": m.uci(), "san": board.san(m)} for m in board.legal_moves],
+            "seen": seen,
+            "position": position_id(board),
+            "number": numbered(board, ""),  # "12." or "12..."
+        }
+
+    def glimpse_answer(self, gid: int, uci: str) -> dict[str, Any]:
+        with self.lock:
+            board = self._glimpses.get(gid)
+        if board is None:
+            raise SessionError("that position has gone; take another")
+        try:
+            move = chess.Move.from_uci(uci)
+        except ValueError as exc:
+            raise SessionError(f"malformed move {uci!r}") from exc
+        if move not in board.legal_moves:
+            raise SessionError(f"illegal move {uci}")
+
+        def top(logprobs: dict[str, float], k: int = 3) -> list[dict[str, Any]]:
+            best = sorted(logprobs, key=logprobs.__getitem__, reverse=True)[:k]
+            return [
+                {"uci": u, "san": board.san(chess.Move.from_uci(u)), "p": math.exp(logprobs[u])}
+                for u in best
+            ]
+
+        you = {"uci": uci, "san": board.san(move)}
+        if self.twin.has_twin and board.move_stack:
+            opp = self.twin.opponent("current", None, self.rng)
+            logprobs, _ = self.inference.submit(opp.analyze, board.copy()).result()
+            self.cache.commit()
+            here = self.twin.profile.book.get(position_key(board), {})
+            usual = max(here, key=here.__getitem__) if here else None
+            return {
+                "mode": "yours",
+                "you": {**you, "count": here.get(uci, 0), "p": math.exp(logprobs[uci])},
+                "usual": None
+                if usual is None
+                else {
+                    "uci": usual,
+                    "san": board.san(chess.Move.from_uci(usual)),
+                    "count": here[usual],
+                },
+                "seen": sum(here.values()),
+                "twin": top(logprobs),
+            }
+        request = PriorRequest(board.copy(), GLIMPSE_RATING, GLIMPSE_RATING)
+        dist = self.inference.submit(lambda: self.twin.prior.predict([request])[0]).result()
+        return {
+            "mode": "people",
+            "you": {**you, "p": math.exp(dist.logprobs[uci])},
+            "people": top(dist.logprobs),
+            "rating": GLIMPSE_RATING,
+        }
 
     def forget(self, what: str, confirm: str) -> None:
         if confirm != FORGET_WORD:
@@ -444,6 +546,7 @@ def make_handler(app: PlayApp, allowed_hosts: set[str]) -> type[BaseHTTPRequestH
                 "/api/versions": lambda: {"versions": app.twin.versions()},
                 "/api/settings": app.settings_view,
                 "/api/job": lambda: {"job": app.jobs.view()},
+                "/api/glimpse": app.glimpse,
             }
             if self.path == "/":
                 self._send(HTTPStatus.OK, _page(), "text/html; charset=utf-8")
@@ -489,6 +592,10 @@ def make_handler(app: PlayApp, allowed_hosts: set[str]) -> type[BaseHTTPRequestH
                 self._json(HTTPStatus.BAD_REQUEST, {"error": f"bad request: {exc}"})
                 return
 
+            def job_view(started):
+                job, joined = started
+                return {"job": job.view(), "joined": joined}
+
             def temperature():
                 t = body.get("temperature")
                 return None if t is None else float(t)
@@ -505,15 +612,18 @@ def make_handler(app: PlayApp, allowed_hosts: set[str]) -> type[BaseHTTPRequestH
             }
             other_actions = {
                 "/api/settings": lambda: {"prefs": app.library.set_prefs(body)},
-                "/api/import": lambda: {
-                    "job": app.start_import(
+                "/api/import": lambda: job_view(
+                    app.start_import(
                         str(body.get("source", "")),
                         body.get("username"),
                         body.get("pgn"),
                         bool(body.get("build", True)),
-                    ).view()
-                },
-                "/api/build": lambda: {"job": app.start_build().view()},
+                    )
+                ),
+                "/api/build": lambda: job_view(app.start_build()),
+                "/api/glimpse": lambda: app.glimpse_answer(
+                    int(body.get("id", 0)), str(body.get("uci", ""))
+                ),
                 "/api/forget": lambda: (
                     app.forget(str(body.get("what", "")), str(body.get("confirm", ""))),
                     app.home(),

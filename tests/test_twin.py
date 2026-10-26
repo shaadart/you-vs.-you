@@ -28,7 +28,7 @@ def built(tmp_path_factory):
     assert result == {"player": "Me", "found": 60, "new": 60}
     cache = AnalysisCache(library.settings.analysis_cache_path)
     stages = []
-    profile = library.build(lambda stage, detail: stages.append(stage), "Me", cache)
+    profile = library.build(lambda stage, *_: stages.append(stage), "Me", cache)
     return library, profile, cache, stages
 
 
@@ -218,3 +218,93 @@ def test_live_cache_skips_writes_when_another_process_holds_the_lock(tmp_path):
     with pytest.raises(sqlite3.OperationalError):
         strict.put_prior("k", "m", {"e2e4": -0.1})
     other.rollback()
+
+
+def test_build_plans_rest_on_what_is_known(built, tmp_path):
+    library, profile, _, _ = built
+    games = library.load_games("Me")
+    decisions = sum(g.own_moves() for g in games if g.played_at)
+    fresh = make_library(tmp_path)  # the same games, never built: all read for the first time
+    fresh.import_games(quiet, None, "pgn", None, synthetic_pgn_text())
+    first = fresh.build_plan("Me", fresh.load_games("Me"))
+    assert first["first"] and first["new_decisions"] == decisions
+    assert first["basis"] == "measured"  # nothing known about this machine yet
+    # a rebuild after a cold first build: per-decision costs, priced at this machine's pace
+    warm = library.build_plan("Me", games, prev=profile)
+    assert warm["basis"] == "calibrated" and not warm["first"] and warm["new_decisions"] == 0
+    assert warm["decisions"] == decisions and warm["seconds"] < first["seconds"]
+    # a rebuild after a warm build: that build's own stage times, scaled
+    timed = replace(
+        profile,
+        data={
+            **profile.data,
+            "stage_seconds": {"REMEMBERING": 10.0, "FINDING PATTERNS": 20.0},
+            "cache": {"hits": {"engine": 1000}, "computed": {"engine": 0}},
+        },
+    )
+    plan = library.build_plan("Me", games, prev=timed)
+    per = sum(profile.data["decisions"].values())
+    assert plan["basis"] == "last build"
+    assert plan["stages"]["FINDING PATTERNS"] == round(20.0 * decisions / per, 1)
+    # a new depth reads every game again, at that depth's measured rate
+    library.set_prefs({"speed": "deep"})
+    try:
+        deeper = library.build_plan("Me", games, prev=timed)
+    finally:
+        library.set_prefs({"speed": "lite"})
+    assert deeper["rereads"] and deeper["new_decisions"] == decisions
+    assert deeper["seconds"] > plan["seconds"]
+
+
+def test_time_left_is_measured_when_possible_and_planned_otherwise():
+    from pco.play.jobs import Job
+
+    job = Job(1, "build", stage="REMEMBERING", stage_started=0.0)
+    job.plan = {"REMEMBERING": 100.0, "FINDING PATTERNS": 50.0, "COMPARING DECISIONS": 5.0}
+    assert job.remaining(10.0) == (145.0, "plan")  # 90 left of the plan + what follows
+    job.fraction, job.anchor = 0.5, (2.0, 0.1)  # 40% done in 8 s: 10 s to go at that pace
+    assert job.remaining(10.0) == (65.0, "live")
+    job.fraction = 0.11  # too little progress to trust a pace yet: back to the plan
+    assert job.remaining(10.0)[1] == "plan"
+    importing = Job(2, "import", stage="FINDING YOUR GAMES", stage_started=0.0)
+    assert importing.remaining(5.0) == (None, None)  # nothing to base a number on
+    job.status = "done"
+    assert job.remaining(10.0) == (None, None)
+
+
+def test_home_glimpse_shows_a_position_you_know(built, twin):
+    library, _, cache, _ = built
+    app = PlayApp(library, FakePrior(), FakeEvaluator(), cache, rng=random.Random(5))
+    app.twin = twin
+    g = app.glimpse()
+    assert g["mode"] == "yours" and g["seen"] >= twin_mod.GLIMPSE_SEEN
+    board = chess.Board(g["fen"])
+    assert g["orientation"] == ("white" if board.turn == chess.WHITE else "black")
+    move = g["legal"][0]["uci"]
+    a = app.glimpse_answer(g["id"], move)
+    assert a["you"]["uci"] == move and a["seen"] == g["seen"] and len(a["twin"]) == 3
+    assert a["usual"]["count"] >= a["you"]["count"]
+    with pytest.raises(SessionError):
+        app.glimpse_answer(g["id"], "a1a8")
+    # no Twin yet: the starting position, answered against people at one rating
+    app.twin = TwinService(None, None, list, FakePrior(), FakeEvaluator(), cache)
+    g = app.glimpse()
+    assert g["mode"] == "people" and g["fen"] == chess.STARTING_FEN
+    a = app.glimpse_answer(g["id"], "e2e4")
+    assert a["mode"] == "people" and 0 < a["you"]["p"] <= 1 and a["rating"] == 1500
+    app.close()
+
+
+def test_a_rebuild_records_only_its_own_work(built):
+    """The app shares one long-lived cache: a Twin must record its build's work, not the
+    cache's lifetime totals (estimates read cold vs warm from it)."""
+    library, first, cache, _ = built
+    again = library.build(quiet, "Me", cache)
+    assert first.data["cache"]["computed"]["engine"] > 0
+    assert again.data["cache"]["computed"]["engine"] == 0  # everything was cached
+    assert set(again.data["stage_seconds"]) == {
+        "REMEMBERING",
+        "FINDING PATTERNS",
+        "COMPARING DECISIONS",
+        "RECONSTRUCTING YOU",
+    }

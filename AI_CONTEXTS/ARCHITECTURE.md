@@ -45,7 +45,8 @@ src/pco/
                              weight contrasts), whispers, post-game reflection (per-decision Twin view + divergences)
   play/library.py     [impl] Library: the interface's view of $PCO_HOME (players, games, Twins, preferences, imports
                              via import_account/import_records, builds via train_profile, forgetting)
-  play/jobs.py        [impl] JobRunner: one background job at a time, (stage, machine fragment) reports
+  play/jobs.py        [impl] JobRunner: one background job at a time; (stage, fragment, fraction) reports;
+                             time left from live pace or the plan (D44)
   play/static/index.html [impl] single page, "Mirror" identity + "Twin" experience (docs/DESIGN.md): hash routes for
                              home/meet/game/reflection/review/twin/archive/settings/import/build
   play/static/fonts/  [impl] bundled Newsreader + IBM Plex Mono woff2 (OFL), served by a whitelisted /static route
@@ -429,6 +430,39 @@ limit, never required). Planned: a hardware profile (It. 7).
   with a 0.1 s busy timeout and best-effort writes, and commits after every move.
   Another pco process holding the write lock costs only uncached results, never a
   stalled or failed move. A locked cache is never treated as corrupt.
+
+- **D44 Time left is computed from real state, never invented.** Work reports
+  `(stage, detail, fraction)`. Fractions come from countable work: decisions
+  analyzed, the 25 regularization/recency fits, the 6 sweep temperatures, Chess.com
+  monthly archives, and Lichess games seen against the account's count (first
+  imports only). `Job.remaining()` uses the current stage's own pace once ≥ 3% and
+  ≥ 2 s of it are measured ("live"). Otherwise it uses the plan, and it always adds
+  the plan for stages still to come. With neither, there is no number.
+- **D45 Build plans rest on this machine's history.** `Library.build_plan` prices
+  each stage:
+  - from the previous Twin's `stage_seconds` when that build was warm at the same
+    depth;
+  - else from per-decision costs measured here (E8.1);
+  - new or re-read decisions at the depth's preset rate, calibrated by the newest
+    full (cold) build's own analysis pace.
+
+  Cold vs warm is read from engine searches computed per decision (about 2 cold,
+  near 0 warm). Cache hit counts are not clean, because the app's cache is shared
+  with live play. The basis is shown: "from your last build", "from this
+  machine's past pace", or "roughly" when there is no history.
+- **D46 Continuity is server truth.** Starting work while a job runs returns that
+  job (`joined: true`) instead of 409. The page has one job watcher (2.5 s, or
+  0.8 s on the build screen) feeding the top-bar indicator, Home and Settings. A
+  page reload or second tab sees the same job. A server restart ends the job; the
+  analysis cache keeps its work.
+- **D47 Geist Pixel for titles only** (Square, OFL, 28 KB, bundled). It is the
+  machine's signature: the second YOU, headlines and archive years. Every sentence
+  stays in Newsreader or Plex Mono.
+- **D48 Background Python work must not run beside live analysis.** The model's
+  forward pass releases and reacquires the interpreter lock hundreds of times. A
+  CPU-bound Python thread beside it turned a 0.1 s answer into 5–8 s (measured).
+  Startup warm-up is limited to versions and home positions (~2 s). Decision-kind
+  counts are computed by the reflection on the analysis thread.
 
 ## Known limitations
 

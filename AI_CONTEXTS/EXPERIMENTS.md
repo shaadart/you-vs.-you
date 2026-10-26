@@ -641,3 +641,38 @@ engine reference changes; the chosen play temperature stayed at 0.8.
   The quickstart estimate uses that factor.
 - Live latency of a Lite-trained personal opponent (`bench_play.py`, 1 thread, no
   cache): p50 38.7 ms, p95 50.2 ms, peak RSS 268 MB (Standard: about 50 ms, E5.2).
+
+## E8.1: Build stage costs and time-left estimates (2026-10-26)
+
+Setup: Lite preset, 4 workers, 2,000 most recent games, on the owner's 12-core machine.
+"Cold" means an empty analysis cache. Copies of homes were used, never the owner's data.
+
+| run | decisions | REMEMBERING | FINDING PATTERNS | COMPARING | RECONSTRUCTING | total |
+|---|---|---|---|---|---|---|
+| owner copy, cached rebuild | 65,963 | 49.2 s | 41.9 s | 3.4 s | 5.6 s | 100.9 s |
+| owner copy, cold | 65,963 | 1,201.2 s (55/s) | 911.1 s | 39.8 s | 4.8 s | 2,157.4 s |
+| research home (warpentak), cold first build via the app | 64,503 | 922.2 s | 938.6 s | 43.5 s | 5.1 s | 1,909.4 s |
+
+The owner copy's cold run shared the CPU with test runs for part of its time, so treat
+it as an upper bound. The owner's own cold build in the app (before stage timing
+existed) took 1,843 s in total.
+
+- **On a first build, FINDING PATTERNS is ~45% of the time.** Nothing is cached, so
+  the model runs at every rating tried (val) and at the chosen one (train). After a
+  depth change those model results are still cached; only engine work repeats
+  (D45).
+- **Estimate validation:**
+  - First build (warpentak, never seen by the estimator): planned 1,830 s, actual
+    1,909 s of active time (+4%).
+  - Cached rebuild via the app (owner copy): "About 2 minutes" at the start, actual
+    1:36.
+- **The machine slept for 61 min 18 s during the first build** (journal: suspend
+  17:51:15 → 18:52:33). Wall-clock job timing inflated REMEMBERING to 4,599 s and the
+  live estimate to 5,807 s right after waking. The training's own monotonic timer
+  measured 922 s. Job timing now uses the monotonic clock (D44).
+- **Live latency:**
+  - home-glimpse answers: 0.05–0.09 s; moves and replies: 0.1–0.28 s with a build
+    running.
+  - A CPU-bound Python thread (decision-kind counts at startup) beside live analysis
+    made answers take 5–8 s (D48).
+  - Reflection with lazy kind counts (2,000 games): ≈ 4 s.

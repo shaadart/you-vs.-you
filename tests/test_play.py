@@ -217,14 +217,24 @@ def test_onboarding_import_build_play_reflect_forget(server):
 
     status, body = call(srv, "POST", "/api/import", {"source": "pgn", "pgn": synthetic_pgn_text()})
     assert status == 200 and body["job"]["status"] == "running"
-    status, busy = call(srv, "POST", "/api/import", {"source": "accounts"})
-    assert status == 409 and "already working" in busy["error"]
+    first = body["job"]["id"]
+    # starting again while it runs joins the same work: nothing is duplicated or refused
+    status, again = call(srv, "POST", "/api/build", {})
+    assert status == 200 and again["joined"] and again["job"]["id"] == first
+    status, again = call(srv, "POST", "/api/import", {"source": "accounts"})
+    assert status == 200 and again["joined"] and again["job"]["id"] == first
     job = wait_job(srv)
-    assert job["status"] == "done", job
+    assert job["status"] == "done" and job["id"] == first, job
     assert job["result"]["found"] == 60 and job["result"]["player"] == "Me"
     assert job["stages"][0] == "FINDING YOUR GAMES" and job["stages"][-1] == "READY"
+    assert set(job["plan"]) >= {"REMEMBERING", "FINDING PATTERNS"} and job["meta"]["first"]
+    assert job["eta"] is None and set(job["durations"]) >= {"REMEMBERING", "FINDING PATTERNS"}
     _, h = call(srv, "GET", "/api/home")
     assert h["player"] == "Me" and h["has_twin"] and h["games"] == 60
+    est = h["estimate"]  # a rebuild now: same depth, nothing new; the first build was cold,
+    assert est["basis"] == "calibrated"  # so its times can't describe a rebuild
+    assert not est["first"] and not est["rereads"] and est["new_decisions"] == 0
+    assert est["seconds"] >= 0 and est["decisions"] > 0
     assert h["years"] == ["2025", "2026"] and h["built_games"] == 60 and h["new_games"] == 0
 
     status, state = call(srv, "POST", "/api/new", {"version": "current", "color": "black"})

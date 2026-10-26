@@ -15,6 +15,9 @@
   font-weight: 400; font-style: normal; font-display: swap; }
 @font-face { font-family: "Plex Mono"; src: url("/static/fonts/plexmono-500.woff2") format("woff2");
   font-weight: 500; font-style: normal; font-display: swap; }
+/* Titles only: the one place the machine signs its name. Everything else stays human. */
+@font-face { font-family: "Geist Pixel"; src: url("/static/fonts/geist-pixel-square.woff2") format("woff2");
+  font-weight: 500; font-style: normal; font-display: swap; }
 
 :root {
   --bg: #F3F0E9; --surface: #FAF8F3; --ink: #191816; --ink-2: #4E4A44; --ink-3: #6B665D;
@@ -26,6 +29,7 @@
   --serif: "Newsreader", "Iowan Old Style", Charter, "Bitstream Charter", Georgia, serif;
   --mono: "Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --pixel: "Geist Pixel", var(--mono);
   --ease: cubic-bezier(.2, .7, .2, 1);
   color-scheme: light;
 }
@@ -64,6 +68,13 @@ a { text-decoration: none; }
 .brand .sq { width: 8px; height: 8px; background: var(--machine); }
 .brand .word { font: 500 14px var(--mono); letter-spacing: .02em; }
 .nav { display: flex; gap: 2px; }
+.pill { margin-right: auto; margin-left: 22px; display: inline-flex; align-items: center; gap: 9px;
+  font: 500 10.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+.pill:hover { color: var(--ink); }
+.pill .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--machine);
+  animation: breathe 2.6s var(--ease) infinite; }
+.pill.ready .pulse { background: var(--human); animation: none; }
+@keyframes breathe { 50% { opacity: .25; } }
 .nav a, .ghost { padding: 8px 10px; border-radius: 6px; border: 0; background: none; cursor: pointer;
   font: 500 10.5px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
 .nav a:hover, .ghost:hover { color: var(--ink); }
@@ -75,8 +86,9 @@ a { text-decoration: none; }
 .column { max-width: 760px; margin: 0 auto; padding: clamp(40px, 12vh, 120px) 32px 64px; }
 .display { margin: 0; font: 400 clamp(38px, 6vw, 64px)/1.06 var(--serif); letter-spacing: -.02em;
   font-optical-sizing: auto; text-wrap: balance; }
-.caps { margin: 0; font: 400 clamp(46px, 8.5vw, 92px)/1 var(--serif); letter-spacing: .01em;
-  font-optical-sizing: auto; }
+.headline { margin: 0; font: 500 clamp(30px, 4.2vw, 46px)/1.14 var(--pixel); letter-spacing: -.035em;
+  text-wrap: balance; }
+.headline.big { font-size: clamp(36px, 6.2vw, 68px); line-height: 1.04; letter-spacing: -.04em; }
 .lede { margin: 18px 0 0; font: italic 400 clamp(22px, 3vw, 30px)/1.25 var(--serif); color: var(--ink-2); }
 .cta { display: inline-flex; align-items: center; justify-content: center; gap: 12px; height: 52px;
   padding: 0 30px; border: 0; border-radius: 3px; background: var(--ink); color: var(--bg); cursor: pointer;
@@ -102,11 +114,24 @@ a { text-decoration: none; }
 
 /* the second YOU: an echo set at another optical size, slightly displaced */
 .echo { position: relative; display: inline-block; margin-right: .12em; }
-.echo::after { content: attr(data-word); position: absolute; left: .035em; top: .03em; z-index: -1;
-  color: var(--machine); opacity: .16; font-variation-settings: "opsz" 6; pointer-events: none; }
+.echo::after { content: attr(data-word); position: absolute; left: .04em; top: .02em; z-index: -1;
+  font-family: var(--serif); font-weight: 400; letter-spacing: -.01em; color: var(--human); opacity: .2;
+  pointer-events: none; }
 
-/* ---- home ---- */
-.home .actions { margin-top: 48px; }
+/* ---- home: show, don't tell ---- */
+.home { max-width: 1120px; margin: 0 auto; padding: clamp(36px, 9vh, 96px) 32px 64px; display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 400px); gap: 72px; align-items: center; }
+.home .actions { margin-top: 44px; }
+.home .estimate { margin-top: 14px; }
+.glimpse { margin: 0; }
+.glimpse .prompt { margin: 0 0 14px; font: italic 400 19px/26px var(--serif); color: var(--ink-2); }
+.glimpse .board-wrap { box-shadow: 0 24px 44px -36px rgba(40, 32, 18, .5); }
+.glimpse svg.board { cursor: pointer; }
+.glimpse .answer { min-height: 112px; margin-top: 16px; }
+.glimpse .answer p { margin: 0; font: 400 17px/25px var(--serif); }
+.glimpse .answer p + p { margin-top: 2px; }
+.glimpse .answer p.machine { margin-top: 8px; font: 400 11px/17px var(--mono); }
+.glimpse .answer .quiet { margin-top: 6px; }
 .status-line { margin: 22px 0 0; font: italic 400 18px/26px var(--serif); color: var(--ink-2); }
 .status-line a { font: 500 10.5px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--machine); margin-left: 10px; }
 
@@ -114,7 +139,7 @@ a { text-decoration: none; }
 .ritual { display: flex; flex-direction: column; align-items: center; text-align: center; }
 .ritual .you { font: 400 clamp(64px, 12vw, 128px)/1 var(--serif); letter-spacing: -.01em;
   font-variation-settings: "opsz" 72; transition: transform .6s var(--ease), opacity .6s var(--ease); }
-.ritual .you.second { font-variation-settings: "opsz" 6; color: var(--ink-2); letter-spacing: .01em; }
+.ritual .you.second { font: 500 clamp(60px, 11vw, 118px)/1 var(--pixel); color: var(--ink-2); letter-spacing: -.05em; }
 .ritual .down { margin: 10px 0; font: 400 16px var(--mono); color: var(--ink-3); transition: opacity .3s; }
 .ritual .cta { margin-top: 18px; }
 .ritual.converge .down { opacity: 0; }
@@ -210,8 +235,8 @@ svg.board .drag { pointer-events: none; filter: drop-shadow(0 6px 6px rgba(0,0,0
 .replay-moves span { cursor: pointer; }
 
 /* ---- twin portrait, archive ---- */
-.portrait .you-year { font: 400 clamp(64px, 11vw, 120px)/1 var(--serif); letter-spacing: -.02em; }
-.portrait .you-year .year { color: var(--ink-3); font-variation-settings: "opsz" 6; }
+.portrait .you-year { font: 500 clamp(56px, 10vw, 108px)/1 var(--pixel); letter-spacing: -.05em; }
+.portrait .you-year .year { color: var(--ink-3); }
 .portrait .counts { margin-top: 22px; }
 .observations { list-style: none; margin: 56px 0 0; padding: 0; }
 .observations li { padding: 22px 0; border-top: 1px solid var(--rule); }
@@ -221,7 +246,7 @@ svg.board .drag { pointer-events: none; filter: drop-shadow(0 6px 6px rgba(0,0,0
 .footnote p { margin: 6px 0 0; }
 .era { padding: 30px 0; border-top: 1px solid var(--rule); display: grid; grid-template-columns: 1fr auto;
   align-items: end; gap: 8px 24px; }
-.era h2 { margin: 0; font: 400 clamp(36px, 6vw, 56px)/1 var(--serif); letter-spacing: -.01em; }
+.era h2 { margin: 0; font: 500 clamp(30px, 4.6vw, 46px)/1 var(--pixel); letter-spacing: -.04em; }
 .era h2 .year { color: var(--ink-3); }
 .era .machine { grid-column: 1; }
 .era .side { grid-row: 1 / span 2; grid-column: 2; align-self: center; }
@@ -260,10 +285,18 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
 .field .file { height: 52px; display: inline-flex; align-items: center; padding: 0 18px; border: 1px dashed var(--ink-3);
   border-radius: 4px; cursor: pointer; font: 400 13px var(--mono); color: var(--ink-2); }
 .field .file input { display: none; }
-.stages { list-style: none; margin: 48px 0 0; padding: 0; font: 500 clamp(16px, 2.4vw, 22px)/1.9 var(--mono); letter-spacing: .14em; }
-.stages li { color: var(--ink-3); transition: color .6s; }
+.eta { margin: 30px 0 0; font: 400 22px/30px var(--serif); }
+.eta + .machine { margin-top: 4px; }
+.first-note { margin: 18px 0 0; font: italic 400 16px/24px var(--serif); color: var(--ink-3); max-width: 34em; }
+.stages { list-style: none; margin: 40px 0 0; padding: 0; font: 500 clamp(15px, 2.2vw, 20px)/1.9 var(--mono); letter-spacing: .14em; }
+.stages li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 18px; color: var(--ink-3); transition: color .6s, opacity .6s; }
 .stages li.now { color: var(--ink); }
-.fragments { margin-top: 26px; min-height: 120px; }
+.stages li.todo { opacity: .38; }
+.stages li .machine { letter-spacing: .08em; }
+.stages li.done .machine { color: var(--ink-3); }
+.leave { margin: 26px 0 0; font: italic 400 15px/22px var(--serif); color: var(--ink-3); }
+.fragments { margin-top: 26px; min-height: 56px; }
+.fragments:empty { min-height: 0; margin: 0; }
 .fragments p { margin: 0; transition: opacity .6s; }
 
 /* ---- shortcuts ---- */
@@ -291,6 +324,9 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
   svg.board .coord { font-size: 20px; }
   .review .diff, .review .replay-side { padding: 18px 16px 32px; }
   .era { grid-template-columns: 1fr; }
+  .home { grid-template-columns: 1fr; gap: 40px; padding: 32px 20px 56px; }
+  .pill { margin-left: 12px; }
+  .pill .long { display: none; }
   .era .side { grid-row: auto; grid-column: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -317,6 +353,7 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
 
 <header class="top">
   <a class="brand" href="#/" aria-label="Home"><span class="sq" aria-hidden="true"></span><span class="word">pco</span></a>
+  <a id="job-pill" class="pill" href="#/build" hidden><span class="pulse" aria-hidden="true"></span><span id="job-pill-text"></span></a>
   <nav class="nav" aria-label="Destinations">
     <a href="#/" data-nav="play">Play</a>
     <a href="#/archive" data-nav="archive">Archive</a>
@@ -327,14 +364,27 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
 
 <main>
   <!-- HOME: almost empty -->
-  <section id="s-home" class="screen home column" hidden>
-    <h1 class="display" id="home-question">What do you want to do with yourself?</h1>
-    <p id="home-job" class="status-line" hidden></p>
-    <div class="actions">
-      <button id="home-play" class="cta">Play yourself</button>
-      <button id="home-resume" class="quiet" hidden>Return to your game</button>
+  <section id="s-home" class="screen home" hidden>
+    <div>
+      <h1 class="headline" id="home-question">What do you want to do with yourself?</h1>
+      <p id="home-job" class="status-line" hidden></p>
+      <div class="actions">
+        <button id="home-play" class="cta">Play yourself</button>
+        <button id="home-resume" class="quiet" hidden>Return to your game</button>
+      </div>
+      <p id="home-estimate" class="machine estimate" hidden></p>
+      <p id="home-summary" class="summary"></p>
     </div>
-    <p id="home-summary" class="summary"></p>
+    <figure id="glimpse" class="glimpse" hidden>
+      <figcaption id="glimpse-prompt" class="prompt"></figcaption>
+      <div class="board-wrap"><svg id="glimpse-board" class="board" viewBox="0 0 800 800" role="img" aria-label="A position to answer"></svg></div>
+      <div class="answer" aria-live="polite">
+        <p id="glimpse-you"></p>
+        <p id="glimpse-twin"></p>
+        <p id="glimpse-machine" class="machine"></p>
+        <button id="glimpse-again" class="quiet" hidden>Another position</button>
+      </div>
+    </figure>
   </section>
 
   <!-- MEET: which version of yourself -->
@@ -395,7 +445,7 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
   <section id="s-reflection" class="screen column" hidden>
     <p id="ref-wait" class="human dots">Looking back</p>
     <div id="ref-body" hidden>
-      <h1 id="ref-title" class="caps reveal"></h1>
+      <h1 id="ref-title" class="headline big reveal"></h1>
       <p id="ref-sub" class="lede reveal"></p>
       <div class="stack" style="margin-top:56px">
         <div id="ref-match-block" class="reveal"><p id="ref-match" class="display" style="font-size:clamp(28px,4vw,40px)"></p><p id="ref-match-machine" class="machine" style="margin-top:8px"></p></div>
@@ -457,7 +507,7 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
       <div class="actions" style="margin-top:36px"><button class="cta" data-go="meet">Play yourself</button></div>
     </div>
     <div id="twin-none" hidden>
-      <h1 class="display">Your Twin isn't here yet.</h1>
+      <h1 class="headline">Your Twin isn't here yet.</h1>
       <div class="actions" style="margin-top:36px"><button class="cta" data-go="import">Show me your chess</button></div>
     </div>
   </section>
@@ -484,6 +534,8 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
       <p id="set-twin" class="body"></p>
       <p id="set-twin-machine" class="machine" style="margin-top:6px"></p>
       <div class="actions" style="margin-top:12px"><button id="set-rebuild" class="quiet">Rebuild your Twin</button></div>
+      <p id="set-estimate" class="machine" style="margin-top:4px"></p>
+      <p id="set-job" class="body" hidden></p>
     </section>
     <section>
       <p class="label">Analysis depth</p>
@@ -491,7 +543,7 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
         <button data-speed="lite">Quick</button><button data-speed="standard">Balanced</button><button data-speed="deep">Thorough</button>
       </div>
       <p id="set-depth-machine" class="machine" style="margin-top:10px"></p>
-      <p class="note">Used the next time your Twin is rebuilt. Deeper is slower; on three players it was not more accurate.</p>
+      <p class="note">Used the next time your Twin is rebuilt, which then reads every game again, once. Deeper is slower; on three players it was not more accurate.</p>
     </section>
     <section>
       <p class="label">Hardware</p>
@@ -539,7 +591,7 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
 
   <!-- IMPORT: show me your chess -->
   <section id="s-import" class="screen column" hidden>
-    <h1 class="caps" style="font-size:clamp(40px,7vw,76px)">SHOW ME YOUR CHESS.</h1>
+    <h1 class="headline big">SHOW ME YOUR CHESS.</h1>
     <div id="sources" class="sources" role="group" aria-label="Where your games are">
       <button data-source="chesscom">Chess.com</button><button data-source="lichess">Lichess</button><button data-source="pgn">PGN</button>
     </div>
@@ -549,15 +601,20 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
       <button id="import-go" class="cta" type="submit">Bring them</button>
     </form>
     <p id="import-note" class="machine" style="margin-top:14px"></p>
+    <p id="import-expect" class="first-note" hidden>You will see how long it takes as soon as your games are counted.</p>
     <p id="import-notice" class="notice" hidden></p>
   </section>
 
   <!-- BUILD: no progress bar -->
   <section id="s-build" class="screen column" hidden>
-    <h1 id="build-head" class="display"></h1>
+    <h1 id="build-head" class="headline"></h1>
     <p id="build-sub" class="lede"></p>
+    <p id="build-eta" class="eta" aria-live="polite"></p>
+    <p id="build-eta-machine" class="machine"></p>
+    <p id="build-first" class="first-note" hidden></p>
     <ol id="stages" class="stages"></ol>
     <div id="fragments" class="fragments"></div>
+    <p id="build-leave" class="leave" hidden>You can leave this page. It keeps going, and it will be here when you come back.</p>
     <div id="build-done" class="actions" style="margin-top:36px" hidden><button class="cta" data-go="meet">Meet yourself</button></div>
     <div id="build-failed" hidden><p id="build-error" class="machine" style="color:var(--check)"></p>
       <div class="actions" style="margin-top:20px"><button class="quiet" data-go="">Back</button></div></div>
@@ -675,6 +732,34 @@ function statusText() {
   return state.check ? "Your move. You're in check." : "Your move.";
 }
 const signature = s => (s ? ` · <span class="san">${esc(s.move)}</span> ${Math.round(s.share * 100)}%` : "");
+// Time left, in words. Coarse on purpose: an estimate must not look more exact than it is.
+function timeLeft(sec) {
+  if (sec == null) return "";
+  if (sec < 45) return "Less than a minute left.";
+  if (sec < 90) return "About a minute left.";
+  const min = sec < 600 ? Math.round(sec / 60) : Math.round(sec / 300) * 5;
+  if (min < 60) return `About ${min} minutes left.`;
+  const h = Math.floor(min / 60), m = min % 60;
+  return `About ${h} hour${h > 1 ? "s" : ""}${m ? ` ${m} minutes` : ""} left.`;
+}
+function about(sec, word = "ABOUT") {  // machine voice: ABOUT 3 MIN · ABOUT 1 H 05 MIN
+  if (sec < 45) return "UNDER A MINUTE";
+  const min = sec < 600 ? Math.max(1, Math.round(sec / 60)) : Math.round(sec / 300) * 5;
+  return min < 60 ? `${word} ${min} MIN` : `${word} ${Math.floor(min / 60)} H ${String(min % 60).padStart(2, "0")} MIN`;
+}
+const clock = sec => {
+  sec = Math.round(sec);
+  const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, ss = String(sec % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+};
+// Before a build: how long, and why it is that long.
+function estimateLine(e) {
+  if (!e) return "";
+  const why = e.first ? "THE FIRST TIME"
+    : e.rereads ? "EVERY GAME IS READ AGAIN AT THE NEW DEPTH"
+    : e.new_decisions ? `${n(e.new_decisions)} NEW DECISIONS TO READ` : "NOTHING NEW TO READ";
+  return `${about(e.seconds, e.basis === "measured" ? "ROUGHLY" : "ABOUT")} · ${why}`;
+}
 const versionName = v => (v.id === ui.oldest ? "Older You" : v.label);
 
 /* ------------------------------------------------------------ server */
@@ -720,6 +805,8 @@ function show(name, param) {
   for (const s of SCREENS) $("s-" + s).hidden = s !== name;
   for (const a of document.querySelectorAll("[data-nav]"))
     a.setAttribute("aria-current", a.dataset.nav === NAV[name] ? "page" : "false");
+  if (name === "meet" || name === "build") ui.jobAcknowledged = !jobRunning();
+  renderPill();
   (ENTER[name] || (() => {}))(param);
 }
 window.addEventListener("hashchange", () => { const r = parseRoute(); show(r.name, r.param); });
@@ -1088,15 +1175,9 @@ const ENTER = {
   async home() {
     await loadHome();
     if (!home) return;
-    if (!home.games && !(home.job && home.job.status === "running")) { go("import"); return; }
-    const job = home.job && home.job.status === "running";
-    $("home-job").hidden = !job;
-    if (job) $("home-job").innerHTML = `We're going through your games. <a href="#/build">See</a>`;
-    $("home-question").textContent = home.has_twin ? "What do you want to do with yourself?" : "Your games are here. Your Twin isn't, yet.";
-    $("home-play").textContent = home.has_twin ? "Play yourself" : "Build your Twin";
-    $("home-play").disabled = job && !home.has_twin;
-    $("home-resume").hidden = !home.game;
-    $("home-summary").textContent = homeSummary(home);
+    if (home.job) ui.job = home.job;
+    renderHome();
+    loadGlimpse();
   },
   async meet(param) {
     $("ritual").classList.remove("converge");
@@ -1184,9 +1265,107 @@ async function meet() {
 }
 $("meet-play").addEventListener("click", meet);
 $("home-play").addEventListener("click", async () => {
-  if (home && home.has_twin) { go("meet"); return; }
-  const r = await request("/api/build", {});
-  if (r.ok) go("build");
+  if (!home || !home.games) { go("import"); return; }
+  if (home.has_twin) { go("meet"); return; }
+  await startJob("/api/build", {});
+});
+function renderHome() {
+  const h = home, running = jobRunning();
+  const first = !h.games, built = h.has_twin;
+  $("home-question").textContent = first ? "Play against yourself."
+    : built ? "What do you want to do with yourself?" : "Your games are here. Your Twin isn't, yet.";
+  $("home-play").textContent = first ? "Show me your chess" : built ? "Play yourself" : running ? "See it being built" : "Build your Twin";
+  $("home-resume").hidden = !h.game;
+  $("home-summary").textContent = homeSummary(h);
+  $("home-estimate").hidden = !(h.games && !built && !running && h.estimate);
+  $("home-estimate").textContent = estimateLine(h.estimate);
+  renderHomeJob();
+}
+function renderHomeJob() {
+  const job = ui.job, running = jobRunning();
+  $("home-job").hidden = !running;
+  if (running) $("home-job").innerHTML = `${esc(job.kind === "import" && job.stage === "FINDING YOUR GAMES"
+    ? "Bringing in your games." : "We're going through your games.")} ${esc(timeLeft(job.eta))} <a href="#/build">See</a>`;
+}
+
+/* the home glimpse: answer a real position; see what you usually do and what your Twin would */
+const glimpseBoard = makeBoard($("glimpse-board"));
+let glimpse = null;
+async function loadGlimpse() {
+  const r = await request("/api/glimpse");
+  $("glimpse").hidden = !r.ok;
+  if (!r.ok) return;
+  glimpse = { data: r.data, selected: null, answer: null };
+  renderGlimpse();
+}
+const pct = p => (p < 0.01 ? "<1%" : `${Math.round(p * 100)}%`);
+const sanSpan = san => `<span class="san">${esc(san)}</span>`;
+function glimpseCopy(g, a) {
+  if (a.mode === "people") {
+    return {
+      you: a.you.p < 0.01 ? `Almost no one near ${a.rating} plays ${a.you.san} here.`
+        : `About ${pct(a.you.p)} of players near ${a.rating} would play ${a.you.san} too.`,
+      twin: "Yours will learn which one you would play.",
+      machine: `HUMAN MODEL AT ${a.rating} · ` + a.people.map(t => `${sanSpan(t.san)} ${pct(t.p)}`).join(" · "),
+    };
+  }
+  const usual = a.usual, mine = a.you;
+  const you = usual && mine.uci === usual.uci ? `That's your move here: ${n(mine.count)} of ${n(a.seen)} times.`
+    : mine.count > 0 ? `You've played ${mine.san} here ${times(mine.count)}. Usually ${usual.san}: ${n(usual.count)} of ${n(a.seen)}.`
+    : `You've never played ${mine.san} here. Usually ${usual.san}: ${n(usual.count)} of ${n(a.seen)} times.`;
+  const top = a.twin[0];
+  return {
+    you,
+    twin: top.uci === mine.uci ? "Your Twin would play it too." : `Your Twin would play ${top.san}.`,
+    machine: a.twin.map(t => `${sanSpan(t.san)} ${fmt2(t.p)}`).join(" · ") + ` · POSITION ${esc(g.position)}`,
+  };
+}
+function renderGlimpse() {
+  const g = glimpse.data, a = glimpse.answer;
+  $("glimpse-prompt").textContent = g.mode === "yours" ? `You've been here ${n(g.seen)} times. Your move.` : "Make a first move.";
+  const arrows = [];
+  if (a) {
+    const other = a.mode === "people" ? a.people[0] : a.twin[0];
+    if (other.uci !== a.you.uci) arrows.push({ uci: other.uci, who: "twin" });
+    arrows.push({ uci: a.you.uci, who: "you" });
+  }
+  glimpseBoard.render({
+    pieces: parseBoard(g.fen), orientation: g.orientation, last: a ? null : g.last_move, lastBy: "twin",
+    selected: a ? null : glimpse.selected, arrows,
+    targets: glimpse.selected && !a ? g.legal.filter(m => m.uci.startsWith(glimpse.selected)).map(m => m.uci.slice(2, 4)) : [],
+  });
+  const copy = a ? glimpseCopy(g, a) : { you: "", twin: "", machine: "" };
+  $("glimpse-you").textContent = copy.you;
+  $("glimpse-twin").textContent = copy.twin;
+  $("glimpse-machine").innerHTML = copy.machine;
+  $("glimpse-again").hidden = !a;
+  $("glimpse-again").textContent = g.mode === "yours" ? "Another position" : "Try another move";
+}
+async function glimpseClick(sq) {
+  if (!glimpse || glimpse.answer || glimpse.busy) return;
+  const g = glimpse.data, pieces = parseBoard(g.fen), sel = glimpse.selected;
+  const move = sel && (g.legal.find(m => m.uci === sel + sq + "q") || g.legal.find(m => m.uci === sel + sq));
+  if (move) {
+    glimpse.busy = true;
+    const r = await request("/api/glimpse", { id: g.id, uci: move.uci });
+    glimpse.busy = false; glimpse.selected = null;
+    if (r.ok) glimpse.answer = r.data;
+    renderGlimpse();
+    return;
+  }
+  const own = pieces[sq] && isWhite(pieces[sq]) === (g.orientation === "white");
+  glimpse.selected = own && sq !== sel ? sq : null;
+  renderGlimpse();
+}
+$("glimpse-board").addEventListener("pointerdown", e => {
+  if (e.button > 0) return;
+  const svg = $("glimpse-board"), pt = svg.createSVGPoint();
+  pt.x = e.clientX; pt.y = e.clientY;
+  const q = pt.matrixTransform(svg.getScreenCTM().inverse()), sq = glimpseBoard.sqAt(q.x, q.y);
+  if (sq) glimpseClick(sq);
+});
+$("glimpse-again").addEventListener("click", () => {
+  if (glimpse && glimpse.data.mode === "people") { glimpse.answer = null; renderGlimpse(); } else loadGlimpse();
 });
 $("home-resume").addEventListener("click", () => { state = null; go("game"); });
 
@@ -1311,9 +1490,13 @@ function renderSettings(s) {
   $("set-twin-machine").textContent = s.twin ? `DEPTH ${(SPEEDS[s.twin.depth] || "CUSTOM").toUpperCase()}` : "";
   $("set-rebuild").disabled = !s.player;
   $("set-rebuild").textContent = s.twin ? "Rebuild your Twin" : "Build your Twin";
+  $("set-estimate").textContent = estimateLine(s.estimate);
+  renderSettingsJob();
   seg($("set-depth"), s.prefs.speed, "speed");
   const pr = s.presets[s.prefs.speed];
-  $("set-depth-machine").textContent = `${pr.candidates} CANDIDATES · ${n(pr.nodes)} NODES · ~${Math.round(pr.rate)} DECISIONS/S`;
+  const e = s.estimate, mine = e && e.depth === s.prefs.speed && e.basis !== "measured";
+  $("set-depth-machine").textContent = `${pr.candidates} CANDIDATES · ${n(pr.nodes)} NODES · ~${Math.round(mine ? e.rate : pr.rate)} DECISIONS/S`
+    + (mine ? " ON THIS MACHINE" : "");
   const max = Math.min(8, s.cores || 1), workers = s.prefs.workers || s.default_workers;
   const wb = [];
   for (let k = 1; k <= max; k++) { const b = document.createElement("button"); b.dataset.w = String(k); b.textContent = String(k); wb.push(b); }
@@ -1359,14 +1542,23 @@ for (const b of $("set-sound").children) b.addEventListener("click", () => {
 $("set-temp").addEventListener("input", e => { $("set-temp-out").textContent = Number(e.target.value).toFixed(2); });
 $("set-temp").addEventListener("change", e => saveSettings({ temperature: Number(e.target.value) }));
 $("set-temp-reset").addEventListener("click", () => saveSettings({ temperature: null }));
-$("set-refresh").addEventListener("click", async () => {
-  const r = await request("/api/import", { source: "accounts", build: true });
-  if (r.ok) go("build"); else { $("set-notice").hidden = false; $("set-notice").textContent = r.data.error; }
-});
-$("set-rebuild").addEventListener("click", async () => {
-  const r = await request("/api/build", {});
-  if (r.ok) go("build"); else { $("set-notice").hidden = false; $("set-notice").textContent = r.data.error; }
-});
+function renderSettingsJob() {
+  const running = jobRunning(), job = ui.job;
+  for (const id of ["set-rebuild", "set-estimate"]) $(id).hidden = running;
+  $("set-refresh").hidden = running;
+  $("set-job").hidden = !running;
+  if (running) $("set-job").innerHTML = `${esc(job.kind === "import" ? "Bringing in your games and rebuilding." : "Your Twin is being rebuilt.")}`
+    + ` ${esc(timeLeft(job.eta))} <a class="quiet" href="#/build">See</a>`;
+}
+async function startJob(path, body, notice = "set-notice") {
+  const r = await request(path, body);
+  if (!r.ok) { $(notice).hidden = false; $(notice).textContent = r.data.error; return false; }
+  ui.job = r.data.job; ui.jobAcknowledged = false;
+  go("build");
+  return true;
+}
+$("set-refresh").addEventListener("click", () => startJob("/api/import", { source: "accounts", build: true }));
+$("set-rebuild").addEventListener("click", () => startJob("/api/build", {}));
 for (const b of document.querySelectorAll("[data-forget]")) b.addEventListener("click", () => {
   ui.forget = b.dataset.forget;
   $("forget-confirm").hidden = false;
@@ -1394,6 +1586,7 @@ function renderImport() {
   $("import-user").placeholder = pgn ? "Your name in these games (optional)" : `Your ${ui.source === "lichess" ? "Lichess" : "Chess.com"} username`;
   $("import-note").textContent = pgn ? "THE FILE IS READ HERE AND NEVER LEAVES YOUR DEVICE"
     : ui.source ? "ONLY YOUR PUBLIC GAMES ARE READ" : "";
+  $("import-expect").hidden = !ui.source;
 }
 for (const b of $("sources").children) b.addEventListener("click", () => { ui.source = b.dataset.source; renderImport(); $("import-user").focus(); });
 $("import-file").addEventListener("change", e => {
@@ -1411,46 +1604,95 @@ $("import-form").addEventListener("submit", async e => {
     if (!f) { $("import-notice").hidden = false; $("import-notice").textContent = "Choose a PGN file first."; return; }
     body.pgn = await readFile(f);
   } else if (!body.username) { $("import-notice").hidden = false; $("import-notice").textContent = "Which username?"; return; }
-  const r = await request("/api/import", body);
-  $("import-notice").hidden = r.ok;
-  if (!r.ok) { $("import-notice").textContent = r.data.error; return; }
-  go("build");
+  $("import-notice").hidden = true;
+  await startJob("/api/import", body, "import-notice");
 });
 
-/* build: stages, no progress bar */
-const STAGES = ["REMEMBERING", "FINDING PATTERNS", "COMPARING DECISIONS", "RECONSTRUCTING YOU", "READY"];
+/* build: what is happening, how far along, about how long. No progress bar. */
+const BUILD_STAGES = ["REMEMBERING", "FINDING PATTERNS", "COMPARING DECISIONS", "RECONSTRUCTING YOU", "READY"];
+const jobRunning = () => !!(ui.job && ui.job.status === "running");
+function buildCopy(job) {
+  const found = job.result && job.result.found, m = job.meta || {};
+  if (job.status === "failed") return { head: "Something stopped us.", sub: "" };
+  if (job.status === "done") return job.kind === "import" && !job.result.built
+    ? { head: "Nothing new.", sub: "Your Twin is already up to date." }
+    : { head: "Ready.", sub: "Your Twin is waiting." };
+  if (job.stage === "FINDING YOUR GAMES" || (job.kind === "import" && job.stage === "STARTING"))
+    return { head: "Looking for your games.", sub: "" };
+  if (found) return { head: `${n(found)} games found.`, sub: "We're going through them." };
+  return { head: m.first ? "Building your Twin." : "Rebuilding your Twin.", sub: "We're going through your games." };
+}
+function etaMachine(job) {
+  if (job.status === "done") return `TOOK ${clock(job.seconds)}`;
+  if (job.status !== "running") return "";
+  const basis = job.eta == null ? "ESTIMATING"
+    : job.eta_basis === "live" ? "FROM THE PACE SO FAR"
+    : { "last build": "FROM YOUR LAST BUILD", calibrated: "FROM THIS MACHINE'S PAST PACE" }[(job.meta || {}).basis]
+      || "ROUGHLY, FROM MEASURED SPEEDS";
+  return `ELAPSED ${clock(job.seconds)} · ${basis}`;
+}
 function renderJob(job) {
-  const importing = job.stage === "FINDING YOUR GAMES";
-  const found = job.result && job.result.found;
-  $("build-head").textContent = job.status === "failed" ? "Something stopped us."
-    : importing ? "Looking for your games."
-    : found ? `${n(found)} games found.` : job.status === "done" ? "Ready." : "Going through your games.";
-  $("build-sub").textContent = job.status === "failed" ? "" : importing ? "" : job.status === "done" ? "Your Twin is waiting." : "We're going through them.";
-  const reached = STAGES.filter(s => job.stages.includes(s));
-  $("stages").replaceChildren(...reached.map(s => {
-    const li = document.createElement("li"); li.textContent = s;
-    if (s === job.stage && job.status === "running") li.className = "now dots";
-    else if (s === "READY" && job.status === "done") li.className = "now";
+  const copy = buildCopy(job), m = job.meta || {}, running = job.status === "running";
+  $("build-head").textContent = copy.head;
+  $("build-sub").textContent = copy.sub;
+  $("build-eta").textContent = running ? timeLeft(job.eta) : "";
+  $("build-eta-machine").textContent = etaMachine(job);
+  $("build-first").hidden = !(running && (m.first || m.rereads));
+  $("build-first").textContent = m.first ? "The first time is the slowest. After this, only new games are read."
+    : "A new depth means reading every game again, once.";
+  const names = job.kind === "import" ? ["FINDING YOUR GAMES", ...BUILD_STAGES] : BUILD_STAGES;
+  const shown = running ? names : names.filter(s => job.stages.includes(s));
+  $("stages").replaceChildren(...shown.map(s => {
+    const li = document.createElement("li"), word = document.createElement("span"), note = document.createElement("span");
+    word.textContent = s; note.className = "machine";
+    const now = running && s === job.stage, done = job.stages.includes(s) && !now;
+    li.className = now ? "now" : done ? "done" : "todo";
+    if (now) { word.className = "dots"; note.textContent = job.fragments.length ? job.fragments[job.fragments.length - 1] : ""; }
+    else if (done && job.durations[s] != null) note.textContent = clock(job.durations[s]);
+    li.append(word, note);
     return li;
   }));
-  const frags = job.fragments.slice(-5);
+  const frags = running ? job.fragments.slice(-4, -1) : [];
   $("fragments").replaceChildren(...frags.map((f, i) => {
     const p = document.createElement("p"); p.className = "machine"; p.textContent = f;
-    p.style.opacity = String(0.35 + 0.65 * (i + 1) / frags.length); return p;
+    p.style.opacity = String(0.3 + 0.5 * (i + 1) / frags.length); return p;
   }));
-  $("build-done").hidden = job.status !== "done";
+  $("build-leave").hidden = !running;
+  $("build-done").hidden = !(job.status === "done" && (job.kind !== "import" || job.result.built));
   $("build-failed").hidden = job.status !== "failed";
   $("build-error").textContent = job.error || "";
+}
+// One watcher for background work, wherever you are: the top bar, home and settings stay in step.
+function renderPill() {
+  const job = ui.job, pill = $("job-pill"), running = jobRunning();
+  const ended = job && job.status !== "running" && !ui.jobAcknowledged;
+  pill.hidden = ui.route === "build" || !(running || ended);
+  if (pill.hidden) return;
+  pill.classList.toggle("ready", !running);
+  pill.href = running || job.status === "failed" ? "#/build" : "#/meet";
+  $("job-pill-text").innerHTML = running
+    ? `<span class="long">${esc(job.stage === "STARTING" ? "STARTING" : job.stage)} · </span>${job.eta == null ? "WORKING" : about(job.eta)}`
+    : job.status === "failed" ? "SOMETHING STOPPED" : job.result && job.result.built ? "YOUR TWIN IS READY" : "UP TO DATE";
 }
 async function pollJob() {
   clearTimeout(ui.jobTimer);
   const r = await request("/api/job");
-  const job = r.ok && r.data.job;
-  if (!job) { if (ui.route === "build") go(""); return; }
-  if (ui.route === "build") renderJob(job);
-  if (job.status === "running") ui.jobTimer = setTimeout(pollJob, 800);
-  else if (job.status === "done") { reflection = null; await loadHome(); }
+  const job = r.ok ? r.data.job : null;
+  const wasRunning = jobRunning();
+  ui.job = job;
+  if (!job) { renderPill(); if (ui.route === "build") go(""); return; }
+  if (ui.route === "build") { renderJob(job); if (job.status !== "running") ui.jobAcknowledged = true; }
+  if (ui.route === "home" && home) renderHomeJob();
+  if (ui.route === "settings") renderSettingsJob();
+  renderPill();
+  if (job.status === "running") ui.jobTimer = setTimeout(pollJob, ui.route === "build" ? 800 : 2500);
+  else if (wasRunning) {
+    reflection = null; await loadHome();
+    if (ui.route === "home") renderHome();
+    if (ui.route === "settings") ENTER.settings();
+  }
 }
+for (const a of document.querySelectorAll("[data-nav], .brand")) a.addEventListener("click", () => { if (!jobRunning()) ui.jobAcknowledged = true; });
 
 /* ------------------------------------------------------------ keys, sound */
 function toggleHelp(force) { $("shortcuts").hidden = force === undefined ? !$("shortcuts").hidden : !force; }
@@ -1486,13 +1728,15 @@ function tick(capture) {
 
 (async () => {
   await loadHome();
-  if (home && home.job && home.job.status === "running") pollJob();
+  if (home && home.job) { ui.job = home.job; ui.jobAcknowledged = home.job.status !== "running"; pollJob(); }
   const r = parseRoute();
   show(r.name, r.param);
 })();
 
 window.__pco = { clickSquare, resolveTyped, paceFor, statusText, playMove, opponentTurn, api, ui, layers, go, show,
   homeSummary, whisperCopy, reflectionCopy, differenceCopy, afterMove, parseBoard, meet, renderJob,
+  timeLeft, about, estimateLine, glimpseCopy, glimpseClick, renderPill, pollJob,
+  get glimpse() { return glimpse; },
   get state() { return state; }, get home() { return home; }, get reflection() { return reflection; },
   set reflection(r) { reflection = r; } };
 </script>

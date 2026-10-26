@@ -26,7 +26,7 @@ from pco.config import Settings
 from pco.importers.accounts import import_account
 from pco.importers.http import Http
 from pco.importers.pipeline import ImportReport, import_records
-from pco.importers.sources import SourceError, pgn_text_records
+from pco.importers.sources import SourceError, lichess_game_count, pgn_text_records
 from pco.personal.profile import PersonalProfile, train_profile
 from pco.play.twin import GameRow
 from pco.presets import DEFAULT_RECENT_GAMES, DEFAULT_SPEED, PRESETS, preset
@@ -35,14 +35,63 @@ from pco.storage.db import connect
 
 # () -> (prior, make_evaluator, cleanup or None): what a build trains with
 Trainer = Callable[[], tuple[Any, Callable[[], Any], Callable[[], None] | None]]
-Report = Callable[[str, str], None]
+Report = Callable[..., None]  # (stage, detail="", fraction=None)
 
 DEFAULT_PREFS: dict[str, Any] = {"speed": DEFAULT_SPEED, "workers": None, "temperature": None}
+# Seconds per decision for each build stage at Lite, 4 workers, on the owner's 12-core
+# machine, 65,963 decisions (EXPERIMENTS E8.1). Warm = everything cached. Cold = nothing
+# cached: FINDING PATTERNS then pays for the model at every rating it tries (val) and at
+# the chosen one (train). Cold analysis itself is priced from the preset's rate instead.
+# COMPARING scales with engine nodes.
+LITE_NODES = 3_000
+STAGE_COST = {
+    "warm": {
+        "REMEMBERING": 49.2 / 65_963,
+        "FINDING PATTERNS": 41.9 / 65_963,
+        "COMPARING DECISIONS": 3.4 / 65_963,
+        "RECONSTRUCTING YOU": 5.6 / 65_963,
+    },
+    "cold": {
+        "FINDING PATTERNS": 911.1 / 65_963,
+        "COMPARING DECISIONS": 39.8 / 65_963,
+        "RECONSTRUCTING YOU": 4.8 / 65_963,
+    },
+}
 PLATFORM_NAMES = {"chesscom": "CHESS.COM", "lichess": "LICHESS", "pgn": "PGN"}
 
 
 class LibraryError(ValueError):
     pass
+
+
+def build_history(prev: PersonalProfile | None) -> dict[str, Any]:
+    """What a previous build says about this machine. Its engine searches computed per
+    decision tell how it ran: about 2 when every decision was analyzed (cold), near 0 when
+    the analysis was cached (warm). A cold build's REMEMBERING time is the machine's own
+    analysis pace; a warm build's stage times describe a rebuild."""
+    out: dict[str, Any] = {"decisions": 0, "warm": False, "cold_rate": None, "preset_rate": None}
+    if prev is None:
+        return out
+    decisions = sum((prev.data.get("decisions") or {}).values())
+    computed = ((prev.data.get("cache") or {}).get("computed") or {}).get("engine", 0)
+    out["decisions"] = max(1, decisions)
+    out["warm"] = computed <= 0.2 * decisions
+    name = next((n for n, p in PRESETS.items() if vars(p.analysis) == prev.analysis_config), None)
+    # profiles saved before per-build counts (2026-10-26) may carry a shared cache's lifetime
+    # totals; a "cold" build faster than any measured analysis pace (200/s) cannot be one
+    seconds = prev.data.get("train_seconds", 0)
+    old_counts = "stage_seconds" not in prev.data  # saved before per-build counts
+    if old_counts and not out["warm"] and seconds and decisions / seconds > 200:
+        out["warm"] = True
+        computed = 0
+    if decisions and name and computed >= 1.5 * decisions:
+        stages = prev.data.get("stage_seconds") or {}
+        rest = sum(per * decisions for per in STAGE_COST["cold"].values())
+        seconds = stages.get("REMEMBERING") or (seconds - rest)
+        if seconds > 0:
+            out["cold_rate"] = decisions / seconds
+            out["preset_rate"] = PRESETS[name].est_decisions_per_s
+    return out
 
 
 def real_trainer(settings: Settings) -> Trainer:
@@ -100,6 +149,7 @@ class Library:
         self.settings = settings
         self.http = http
         self._trainer = trainer
+        self._pace_memo: dict[str, Any] = {}
 
     def _connect(self):
         return connect(self.settings.db_path)
@@ -248,34 +298,16 @@ class Library:
                 linked = self.accounts(player)
                 if not linked:
                     raise LibraryError("no Chess.com or Lichess account is linked yet")
-                for a in linked:
-                    label = f"{PLATFORM_NAMES[a['platform']]} · {a['username'].upper()}"
-                    say(stage, label)
-                    report, _ = import_account(
-                        conn,
-                        self.http,
-                        self.settings,
-                        a["platform"],
-                        a["username"],
-                        player=player,
-                        progress=progress(label),
+                for i, a in enumerate(linked):
+                    part = (i, len(linked))
+                    reports.append(
+                        self._import_account(conn, say, a["platform"], a["username"], player, part)
                     )
-                    reports.append(report)
             elif source in ("chesscom", "lichess"):
                 if not username or not username.strip():
                     raise LibraryError("which username?")
                 username = username.strip()
-                label = f"{PLATFORM_NAMES[source]} · {username.upper()}"
-                say(stage, label)
-                report, _ = import_account(
-                    conn,
-                    self.http,
-                    self.settings,
-                    source,
-                    username,
-                    player=player,
-                    progress=progress(label),
-                )
+                report = self._import_account(conn, say, source, username, player, (0, 1))
                 reports.append(report)
                 if (
                     report.involving_player == 0
@@ -319,7 +351,100 @@ class Library:
         say(stage, f"{found:,} GAMES · {new:,} NEW")
         return {"player": player, "found": found, "new": new}
 
+    def _import_account(self, conn, say: Report, platform: str, username: str, player, part):
+        """One account, reporting how far along it is: Chess.com by monthly archive, Lichess
+        by games seen against the account's game count (first imports only)."""
+        stage, (i, n) = "FINDING YOUR GAMES", part
+        label = f"{PLATFORM_NAMES[platform]} · {username.upper()}"
+        say(stage, label, i / n)
+        expected = None
+        if platform == "lichess" and not repo.last_successful_run(conn, platform, username.lower()):
+            expected = lichess_game_count(self.http, username)
+
+        def on_report(r: ImportReport) -> None:
+            fraction = (i + min(0.99, r.seen / expected)) / n if expected else None
+            say(stage, f"{label} · {r.seen:,} GAMES · {r.new:,} NEW", fraction)
+
+        def on_month(done: int, total: int) -> None:
+            say(stage, f"{label} · MONTH {done + 1} OF {total}", (i + done / total) / n)
+
+        report, _ = import_account(
+            conn,
+            self.http,
+            self.settings,
+            platform,
+            username,
+            player=player,
+            progress=on_report,
+            on_month=on_month,
+        )
+        return report
+
     # ------------------------------------------------------------- builds
+    def build_plan(
+        self, player: str, games: list[GameRow], prev: PersonalProfile | None = None
+    ) -> dict[str, Any]:
+        """Expected seconds for each build stage, and what the estimate rests on.
+
+        - The last build's measured stage times, scaled to today's decisions, when it used
+          the same depth ("last build").
+        - Otherwise this machine class's measured costs per decision (EXPERIMENTS E8.1):
+          warm when the last build used the same depth (its analysis is cached), cold
+          when there was none or the depth changed (every game is read again).
+        New decisions are always priced at the depth's measured cold analysis rate."""
+        prefs = self.prefs()
+        pr = preset(prefs["speed"])
+        workers = prefs["workers"] or default_workers()
+        dated = [g for g in games if g.played_at]
+        window = dated[-DEFAULT_RECENT_GAMES:]
+        decisions = sum(g.own_moves() for g in window)
+        prev = prev or self.latest_profile(player)
+        same = prev is not None and prev.analysis_config == vars(pr.analysis)
+        history = build_history(prev)
+        # analysis speed for decisions never seen: this machine's own measured pace when an
+        # earlier build read everything; otherwise the preset's measured rate (E7.2, 4 workers)
+        cold_rate = pr.est_decisions_per_s * workers / 4
+        basis = "measured"
+        pace = history if history["cold_rate"] else self._machine_pace(player)
+        if pace["cold_rate"]:
+            cold_rate = pr.est_decisions_per_s * pace["cold_rate"] / pace["preset_rate"]
+            basis = "calibrated"
+        if same:  # earlier analysis is reused; only newer games are read for the first time
+            last_game = prev.data.get("last_game") or ""
+            new = sum(g.own_moves() for g in window if g.played_at > last_game)
+            cached = decisions - new
+            measured = (prev.data.get("stage_seconds") or {}) if history["warm"] else {}
+            if measured:
+                per = history["decisions"]
+                stages = {k: v * decisions / per for k, v in measured.items()}
+                stages["REMEMBERING"] = measured.get("REMEMBERING", 0.0) * cached / per
+                basis = "last build"
+            else:
+                warm = STAGE_COST["warm"]
+                stages = {k: v * decisions for k, v in warm.items()}
+                stages["REMEMBERING"] = warm["REMEMBERING"] * cached
+        else:  # first build, or a new depth: every decision is analyzed again
+            new = decisions
+            # after a depth change the model's results are still cached (they don't depend
+            # on depth): only the engine work is new
+            base = STAGE_COST["cold"] if prev is None else STAGE_COST["warm"]
+            stages = {k: v * decisions for k, v in base.items()}
+            cold_compare = STAGE_COST["cold"]["COMPARING DECISIONS"] * decisions
+            stages["COMPARING DECISIONS"] = cold_compare * pr.analysis.nodes / LITE_NODES
+            stages["REMEMBERING"] = 0.0
+        stages["REMEMBERING"] += new / cold_rate
+        return {
+            "stages": {k: round(v, 1) for k, v in stages.items()},
+            "seconds": round(sum(stages.values())),
+            "decisions": decisions,
+            "new_decisions": new,
+            "first": prev is None,
+            "rereads": prev is not None and not same,
+            "depth": prefs["speed"],
+            "basis": basis,
+            "rate": round(cold_rate, 1),  # decisions/s for games read for the first time
+        }
+
     def build(self, say: Report, player: str, cache) -> PersonalProfile:
         """Train and save a new Twin with the preferred depth (cached work is reused)."""
         if self._trainer is None:
@@ -347,6 +472,22 @@ class Library:
         profile.save(self.settings.profiles_dir)
         say("READY", f"SAVED · {profile.created_at}")
         return profile
+
+    def _machine_pace(self, player: str) -> dict[str, Any]:
+        """The newest build of this player that read every game: this machine's pace."""
+        files = sorted((self.settings.profiles_dir / player).glob("profile-*.json"), reverse=True)
+        key = tuple(f.name for f in files)
+        if self._pace_memo.get("key") != key:
+            found = build_history(None)
+            for f in files[1:]:  # the newest is `prev`, already examined
+                try:
+                    found = build_history(PersonalProfile.load(f))
+                except (OSError, ValueError):
+                    continue
+                if found["cold_rate"]:
+                    break
+            self._pace_memo = {"key": key, "pace": found}
+        return self._pace_memo["pace"]
 
     # ------------------------------------------------------------- data
     def storage(self) -> dict[str, Any]:

@@ -27,6 +27,9 @@ else is removed.
 
    The two often appear together, the human line first and its machine fragment
    underneath. The page never says why.
+
+   Titles are the one place the machine signs its name: they are set in **Geist
+   Pixel**. Everything you read beneath them stays human.
 3. **Craft lives in the details.** Exact contrast ratios, tabular numerals, motion
    that eases rather than bounces, visible focus rings, and no layout shift.
 
@@ -34,9 +37,9 @@ else is removed.
 
 | role | family | size / line | notes |
 |---|---|---|---|
-| Display (home question, headlines) | Newsreader 400 | clamp(38–64) / 1.06 | optical size on, −0.02em |
-| Caps headlines ("YOU WON.", "SHOW ME YOUR CHESS.") | Newsreader 400 | clamp(46–92) / 1 | |
-| The two YOUs (ritual) | Newsreader 400 | clamp(64–128) | first at `opsz 72`, second at `opsz 6`, ink-2 |
+| Titles and headlines (home question, "YOU WON.", "SHOW ME YOUR CHESS.", "YOU / 2026", archive years, build status) | Geist Pixel (Square) 500 | clamp(30–46) / 1.14; large clamp(36–68) / 1.04 | −0.035 to −0.05em; titles only |
+| Human-voice statements ("That was very you.") | Newsreader 400 | clamp(28–40) | stay serif even when large |
+| The two YOUs (ritual) | Newsreader 400 · Geist Pixel 500 | clamp(60–128) | you in the serif; your Twin, the second YOU, in pixels, ink-2 |
 | Lede, whispers (human voice) | Newsreader italic 400 | 20–30 | ink-2 |
 | Status in game | Newsreader 400 | 30 / 36 | |
 | Machine fragments | IBM Plex Mono 400 | 11 / 17 | UPPERCASE, +0.08em, cobalt |
@@ -95,17 +98,37 @@ the browser's back button works.
 
 | screen | what it holds | what it leaves out |
 |---|---|---|
-| **Home** | "What do you want to do with yourself?" · `PLAY YOURSELF` · one summary line (`9,499 games · 6 years · built 26.10.26`). "Return to your game" when one is open; a quiet line while a build runs. No games yet → the import screen. Games but no Twin → "Your games are here. Your Twin isn't, yet." + `BUILD YOUR TWIN`. | dashboards, stats, history |
+| **Home** | Shows instead of telling. Left: "What do you want to do with yourself?" · `PLAY YOURSELF` · one summary line. Right: a real position from your recent games that you have faced often ("You've been here 19 times. Your move."). Answer it, and it shows what you usually play there ("Usually O-O: 11 of 19") and what your Twin would play, as two arrows, with the distribution underneath in the machine voice. First visit (no games): "Play against yourself." and the starting position: your first move is compared with players near 1500 ("About 41% of players near 1500 would play e4 too. Yours will learn which one you would play.") → `SHOW ME YOUR CHESS`. Games but no Twin: `BUILD YOUR TWIN` with its estimate (`ROUGHLY 30 MIN · THE FIRST TIME`). | dashboards, feature lists, explanations |
 | **Meet** (the ritual) | `YOU` ↓ `YOU` ↓ `PLAY`. Below, which version of yourself: Current You, Older You (your oldest year), Bullet/Blitz/Rapid You, `ARCHIVE →`. One machine line states what the version is (`OPENINGS + STRENGTH · 2021 · STYLE · 2026 · RATING 592 …`). Side: White · Black · Either. On PLAY the second YOU rises into the first and the board appears. | difficulty sliders, Elo inputs |
 | **Game** | The board. Above: ■ Your Twin + its version. Below: ● You + typed-move input. Beside: the state in one serif sentence, elapsed time, at most one whisper. `MOVES` (collapsed), `RESIGN` (two-step), `FLIP`. | evaluation bars, probabilities, metrics |
 | **Reflection** | Disclosed one line at a time: `YOU WON.` / `Barely.` → "That was very you." + `MATCH 0.90 · YOU USUALLY 0.82 · 34 DECISIONS` → "You and your Twin parted ways 4 times." + `30 OF 34 DECISIONS IDENTICAL` → `SEE THE DIFFERENCE` · `REPLAY` · `MEET ANOTHER VERSION` · `DONE`. | a move-by-move engine report |
 | **See the difference** | One divergence at a time on the board: your move as an ochre arrow, your Twin's as cobalt. "You chose 18.Bf4." / "Your Twin would have chosen 18.Rd1." / "Both were plausible." / "In this position, you have played Rd1 12 times, and Bf4 twice." (or, in a new position, "You have made this kind of move 73 times before."). | |
 | **Replay** | The game, step by step (`← →`, clickable moves). | |
-| **Twin** (portrait) | `YOU / 2026` (the first YOU carries a faint cobalt echo, the second YOU), counts in mono, then observations: one sentence each, its evidence underneath (`CASTLE -1.43 · Z 23.1`). Opening facts from your own counts. One honest line: "A reconstruction from your moves. It imitates what you did, not who you are." | personality scores, radar charts |
+| **Twin** (portrait) | `YOU / 2026` in pixels, with a faint serif YOU in ochre behind it: you, behind your reconstruction. Then counts in mono, and observations: one sentence each, its evidence underneath (`CASTLE -1.43 · Z 23.1`). Opening facts from your own counts. One honest line: "A reconstruction from your moves. It imitates what you did, not who you are." | personality scores, radar charts |
 | **Archive** | Time as identity: `YOU / 2025`, `YOU / 2024`… each with games, rating, time controls, signature opening, and `PLAY THIS VERSION` (or "Too few games to meet."). | |
-| **Settings** | Sources (accounts, last import, look for new games, add a source) · Your Twin (built when, from how many games, new games since, rebuild) · Analysis depth (Quick/Balanced/Thorough) · Hardware (parallel analyses) · During games (whispers, sound) · Privacy · Data (sizes, Forget your Twin, Forget everything, both confirmed by typing FORGET) · Advanced (temperature, player, model facts, last game PGN). | |
+| **Settings** | Sources (accounts, last import, look for new games, add a source) · Your Twin (built when, from how many games, new games since, rebuild with its cost: `ABOUT 1 H 10 MIN · EVERY GAME IS READ AGAIN AT THE NEW DEPTH`; while work runs, the live line instead) · Analysis depth (Quick/Balanced/Thorough) · Hardware (parallel analyses) · During games (whispers, sound) · Privacy · Data (sizes, Forget your Twin, Forget everything, both confirmed by typing FORGET) · Advanced (temperature, player, model facts, last game PGN). | |
 | **Import** | `SHOW ME YOUR CHESS.` · Chess.com · Lichess · PGN → a username or a file → `BRING THEM`. | |
-| **Build** | No progress bar. "Looking for your games." → "9,499 games found." / "We're going through them." → stages appear only when reached: REMEMBERING, FINDING PATTERNS, COMPARING DECISIONS, RECONSTRUCTING YOU, READY. Under them, the last few machine fragments, older ones fading (`DECISION 48,640 OF 66,011 · 1,658/S`). `MEET YOURSELF` when ready. | percentages, ETAs |
+| **Build** | No progress bar; three answers. *What is happening:* "Looking for your games." → "9,499 games found." / "We're going through them." *How far along:* every stage listed: finished ones with their time (`24:50`), the current one with its count (`DECISION 26,404 OF 66,011 · 52/S`, `FIT 7 OF 25`, `TEMPERATURE 3 OF 6`), the ones to come faint. *How long:* "About 25 minutes left." and where the number comes from (`ELAPSED 3:12 · FROM THE PACE SO FAR`). First build: "The first time is the slowest. After this, only new games are read." Always: "You can leave this page. It keeps going, and it will be here when you come back." | percentages, spinners, invented precision |
+
+## Time and continuity
+
+- **Time left is computed, never invented.** The current stage uses its own measured
+  pace once a little of it is done. Before that, and for the stages still to come,
+  the plan is used: your last build's stage times (when it was a cached rebuild at
+  the same depth), or this machine's pace from its last full build, or, on a machine
+  with no history, the presets' measured speeds, shown as "roughly". With no basis,
+  no number ("ESTIMATING").
+- **Words stay coarse.** "Less than a minute", "About 4 minutes", then steps of 5
+  minutes, then hours. An estimate never looks more exact than it is.
+- **Work is never lost by navigating.** Background work lives on the server. Starting
+  it again while it runs joins the same job (`"joined": true`), never a second one
+  and never a refusal. A quiet indicator in the top bar follows you everywhere
+  (`REMEMBERING · ABOUT 25 MIN`, a slowly breathing cobalt dot), and Home and
+  Settings show the same live line. When it finishes elsewhere, the indicator turns
+  ochre: `YOUR TWIN IS READY`.
+- **Expectations before the wait.** Every button that starts work shows its cost
+  first, and why (`THE FIRST TIME`, `1,200 NEW DECISIONS TO READ`, `EVERY GAME IS
+  READ AGAIN AT THE NEW DEPTH`).
 
 ## Progressive disclosure
 
@@ -171,3 +194,4 @@ synthesized wooden tap. Everything is off under `prefers-reduced-motion`.
 | Pieces ("cburnett") | Colin M.L. Burnett (via lichess-org/lila) | GPLv2+ |
 | Newsreader | The Newsreader Project Authors | SIL OFL 1.1 (`static/fonts/OFL-Newsreader.txt`) |
 | IBM Plex Mono | IBM Corp. | SIL OFL 1.1 (`static/fonts/OFL-IBMPlexMono.txt`) |
+| Geist Pixel (Square) | Vercel, with basement.studio (npm `geist` 1.8.2) | SIL OFL 1.1 (`static/fonts/OFL-GeistPixel.txt`) |

@@ -16,6 +16,7 @@ import hashlib
 import math
 import statistics
 import threading
+import time
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -30,6 +31,7 @@ from pco.decisions.features import clip_cp, phase
 from pco.evaluation.predictors import position_key
 from pco.personal.opponent import PersonalOpponent
 from pco.personal.profile import PersonalProfile
+from pco.presets import DEFAULT_RECENT_GAMES
 
 MIN_VERSION_GAMES = 150  # fewer games give a thin book and a noisy rating
 TEMPOS = ("bullet", "blitz", "rapid", "classical")
@@ -40,6 +42,8 @@ UNUSUAL_LIKENESS = 0.05  # whisper "That was unusual." below this P(move) / P(to
 FAMILIAR_SEEN = 3  # whisper "That position looks familiar." from this many visits
 FAMILIAR_FROM_PLY = 16  # ...but not in the opening, where every position is familiar
 MAX_WHISPERS = 3  # per game
+GLIMPSE_PLIES = (6, 24)  # the home glimpse: positions from your recent games, moves 4-12...
+GLIMPSE_SEEN = 8  # ...in positions you faced at least this often
 WHISPER_GAP = 8  # plies between remarks
 
 PIECES = ("pawn", "knight", "bishop", "rook", "queen", "king")
@@ -355,14 +359,54 @@ class TwinService:
             memory["last_ply"] = ply
         return out
 
+    # ------------------------------------------------------------- the home glimpse
+    def glimpse_positions(self) -> list[tuple[GameRow, int, int]]:
+        """Positions from your recent games that you have faced often and answered in more
+        than one way: (game, ply, times seen), one per position."""
+        return self._get("glimpse", self._glimpse_positions)
+
+    def _glimpse_positions(self) -> list[tuple[GameRow, int, int]]:
+        book, found = self.profile.book, {}
+        for i, g in enumerate(self.recent_games()):
+            if i % 20 == 0:
+                time.sleep(0)
+            board = chess.Board(g.start_fen)
+            me = chess.WHITE if g.white else chess.BLACK
+            for ply, uci in enumerate(g.moves[: GLIMPSE_PLIES[1]]):
+                if board.turn == me and ply >= GLIMPSE_PLIES[0]:
+                    key = position_key(board)
+                    counts = book.get(key)
+                    if counts and key not in found:
+                        seen = sum(counts.values())
+                        if seen >= GLIMPSE_SEEN and max(counts.values()) <= 0.9 * seen:
+                            found[key] = (g, ply, seen)
+                board.push(chess.Move.from_uci(uci))
+        return list(found.values())
+
+    def glimpse(self, rng) -> tuple[chess.Board, int] | None:
+        """A random such position, with its history (the model reads recent moves)."""
+        positions = self.glimpse_positions()
+        if not positions:
+            return None
+        g, ply, seen = rng.choice(positions)
+        board = chess.Board(g.start_fen)
+        for uci in g.moves[:ply]:
+            board.push(chess.Move.from_uci(uci))
+        return board, seen
+
     # ------------------------------------------------------------- kinds of decision
     def kind_counts(self) -> Counter:
-        """How often you made each kind of decision, over all your games."""
+        """How often you made each kind of decision, over the Twin's window of recent games."""
         return self._get("kinds", self._kind_counts)
+
+    def recent_games(self) -> list[GameRow]:
+        return [g for g in self.games() if g.played_at][-DEFAULT_RECENT_GAMES:]
 
     def _kind_counts(self) -> Counter:
         counts: Counter = Counter()
-        for g in self.games():
+        for i, g in enumerate(self.recent_games()):
+            if i % 20 == 0:
+                time.sleep(0)  # background work: let live analysis take the interpreter
             board = chess.Board(g.start_fen)
             me = chess.WHITE if g.white else chess.BLACK
             for uci in g.moves:
@@ -373,10 +417,13 @@ class TwinService:
         return counts
 
     def warm(self) -> None:
-        """Precompute slow derived data in the background (games, versions, decision kinds)."""
+        """Precompute what the first screens need (versions, the home glimpse) in the
+        background. Decision kinds are left to the reflection, which runs on the analysis
+        thread: pure-Python work running beside live analysis slows every move (the
+        interpreter lock is handed back and forth hundreds of times per forward pass)."""
         if self.has_twin:
             threading.Thread(
-                target=lambda: (self.versions(), self.kind_counts()), daemon=True
+                target=lambda: (self.versions(), self.glimpse_positions()), daemon=True
             ).start()
 
     # ------------------------------------------------------------- portrait

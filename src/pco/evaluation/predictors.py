@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
 import chess
@@ -120,6 +120,7 @@ class EloOffset:
         self.offset = 0
         self.fit_curve: dict[int, float] = {}
         self.name = "maia+elo"
+        self.on_offset: Callable[[int], None] | None = None  # progress: offset being tried
 
     def _dists(self, analyses: Sequence[EpisodeAnalysis], offset: int) -> list[LogProbs]:
         if any(a.dist.model_id != self.prior.model_id for a in analyses):
@@ -140,6 +141,8 @@ class EloOffset:
         def score(offsets):
             for o in offsets:
                 if o not in self.fit_curve:
+                    if self.on_offset:
+                        self.on_offset(o)
                     self.fit_curve[o] = mean_nll(self._dists(val, o), val)
             return min(self.fit_curve, key=lambda o: (self.fit_curve[o], abs(o)))
 

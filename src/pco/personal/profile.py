@@ -116,16 +116,36 @@ def train_profile(
     half_lives: tuple[float | None, ...] = HALF_LIVES,
     previous: PersonalProfile | None = None,
     recent_games: int | None = None,
-    report: Callable[[str, str], None] | None = None,
+    report: Callable[[str, str, float | None], None] | None = None,
 ) -> PersonalProfile:
     """Train a profile; `previous` (the player's last profile) warm-starts the Elo search.
 
     `recent_games` keeps only the player's N most recent dated games (fast training on
-    current behavior); None uses the whole history. `report(stage, detail)` receives the
-    build stages shown by the interface: REMEMBERING (analyzing past decisions), FINDING
-    PATTERNS (fitting), COMPARING DECISIONS (validation), RECONSTRUCTING YOU (assembly)."""
-    say = report or (lambda stage, detail: None)
+    current behavior); None uses the whole history. `report(stage, detail, fraction)`
+    receives the build stages shown by the interface: REMEMBERING (analyzing past
+    decisions), FINDING PATTERNS (fitting), COMPARING DECISIONS (validation), RECONSTRUCTING
+    YOU (assembly). `fraction` is how far along the stage's countable work is, or None.
+    Each stage's duration is saved in `data["stage_seconds"]` (later estimates use it)."""
+    stage_seconds: dict[str, float] = {}
+    current = {"stage": None, "t": time.perf_counter()}
+
+    def close_stage() -> None:
+        if current["stage"] is not None:
+            spent = time.perf_counter() - current["t"]
+            stage_seconds[current["stage"]] = round(
+                stage_seconds.get(current["stage"], 0) + spent, 1
+            )
+
+    def say(stage: str, detail: str = "", fraction: float | None = None) -> None:
+        if stage != current["stage"]:
+            close_stage()
+            current["stage"], current["t"] = stage, time.perf_counter()
+        if report:
+            report(stage, detail, fraction)
+
     say("REMEMBERING", "READING GAMES")
+    # the cache may be shared and long-lived (the app): record only this build's own work
+    hits0, misses0 = dict(cache.hits), dict(cache.misses)
     config = config or AnalysisConfig()
     spec = spec or DEFAULT_SPEC
     t0 = time.perf_counter()
@@ -144,7 +164,9 @@ def train_profile(
         if report is None:
             return progress
         return lambda done, _n, rate: say(
-            "REMEMBERING", f"DECISION {offset + done:,} OF {total:,} · {rate:.0f}/S"
+            "REMEMBERING",
+            f"DECISION {offset + done:,} OF {total:,} · {rate:,.0f}/S",
+            (offset + done) / total,
         )
 
     try:
@@ -152,18 +174,28 @@ def train_profile(
         val = builder.analyze(split.val, remember(len(split.train)))
         say("FINDING PATTERNS", f"{len(split.train):,} DECISIONS")
         start = previous.elo_offset if previous is not None else None
+        elo = EloOffset(prior, cache, start=start)
+        elo.on_offset = lambda o: say("FINDING PATTERNS", f"RATING {o:+d}")
         residual = Residual(
-            EloOffset(prior, cache, start=start),
+            elo,
             analyze=lambda _eps: train,
             spec=spec,
             half_lives=half_lives,
+            progress=lambda d, n: say("FINDING PATTERNS", f"FIT {d} OF {n}", d / n),
         )
         model = Book(residual)
         model.fit(split.train, val)
         say("COMPARING DECISIONS", f"{len(val):,} RECENT DECISIONS")
         choice = [a for a in val if a.engine is not None]
         scorer = MoveScorer(builder.evaluators[0], cache, config)
-        sweep = quality_sweep(model.predict(choice), choice, scorer, TEMPERATURES, samples=2)
+        sweep = quality_sweep(
+            model.predict(choice),
+            choice,
+            scorer,
+            TEMPERATURES,
+            samples=2,
+            progress=lambda d, n: say("COMPARING DECISIONS", f"TEMPERATURE {d} OF {n}", d / n),
+        )
         play_t = quality_matching_temperature(sweep)
         (tr_blocks, tr_index), (va_blocks, va_index) = (
             residual.blocks["train"],
@@ -181,6 +213,7 @@ def train_profile(
     # Deployed book: all dated games (train + val); alpha was chosen with train-only counts.
     book = Book.build_counts([*split.train, *split.val])
     last = max((e for e in episodes if e.played_at), key=lambda e: (e.game_index, e.ply))
+    close_stage()
     return PersonalProfile(
         player=player,
         created_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -208,8 +241,12 @@ def train_profile(
             "first_game": split.boundaries.get("train"),
             "last_game": last.played_at,
             "train_seconds": round(time.perf_counter() - t0, 1),
+            "stage_seconds": stage_seconds,
             # incremental training: only uncached work costs anything
-            "cache": {"hits": dict(cache.hits), "computed": dict(cache.misses)},
+            "cache": {
+                "hits": {k: v - hits0.get(k, 0) for k, v in cache.hits.items()},
+                "computed": {k: v - misses0.get(k, 0) for k, v in cache.misses.items()},
+            },
         },
         validation={
             "model": val_model,

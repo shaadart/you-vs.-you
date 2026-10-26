@@ -1,6 +1,6 @@
 # HANDOFF
 
-_Last updated: 2026-10-26, after the "Twin" UX iteration (all roadmap iterations complete)._
+_Last updated: 2026-10-26, after the "Symphony" design refinement (all roadmap iterations complete)._
 
 ## State
 
@@ -10,19 +10,20 @@ _Last updated: 2026-10-26, after the "Twin" UX iteration (all roadmap iterations
 - **The interface** (`pco play`) is the product: home → meet a version of
   yourself → game with whispers → reflection / difference / replay, plus Archive,
   Twin (portrait) and Settings (import, rebuild, depth, forget). Spec:
-  `docs/DESIGN.md` (Mirror identity + Twin experience). Decisions: ARCHITECTURE
-  D37–D43.
+  `docs/DESIGN.md` (Mirror identity + Twin experience, with Geist Pixel titles, the
+  home glimpse, and time/continuity). Decisions: ARCHITECTURE D37–D48.
 - Defaults:
   - speed preset **lite** (same accuracy as standard/deep, about 2× faster; E7.2)
   - training on the **2,000 most recent games** (E7.1)
   - recency half-life chosen on val
   - play temperature fitted per player
   - play at 1 torch thread
-- `uv run pytest -q` passes 144. ruff is clean. `node tests/js/ui_check.js` passes.
+- `uv run pytest -q` passes 148. ruff is clean. `node tests/js/ui_check.js` passes.
 - **The owner's own data lives in the real `~/.local/share/pco`:**
   - player `shaadpgn` (chesscom:shaadpgn + lichess:keerkeet)
-  - Twins: the newest was rebuilt through the app on 2026-10-26 (Lite, 2,000 recent
-    games, with `weight_cov`); older profiles are kept.
+  - The owner reset and rebuilt through the app on 2026-10-26: a cold Quick build
+    (1,843 s), then a cached rebuild. Their preference is Quick, 4 workers. Those two
+    profiles predate per-build cache counts and `stage_seconds` (D45 handles them).
 
   Never modify or delete it (no imports or forgetting on it without the owner).
   The analysis cache there is derived and safe to rebuild. Don't record personal
@@ -47,6 +48,11 @@ There is no pending roadmap iteration. Candidates, all measurement-first (ROADMA
 - The "Twin" UX iteration is uncommitted in git (the owner commits when ready).
 
 ## Watch out for
+
+- Time estimates (D44/D45) are only as good as the measured costs in
+  `play/library.py` `STAGE_COST` (E8.1, one 12-core machine). The live pace takes
+  over within seconds of each counted stage; re-measure if the pipeline changes.
+- Never run CPU-bound Python threads beside live analysis (D48).
 
 - An old `pco play` (pre-Twin code) holds the analysis cache's write lock until it
   exits. The new app copes (D43), but CLI `pco train` would wait 30 s and then fail

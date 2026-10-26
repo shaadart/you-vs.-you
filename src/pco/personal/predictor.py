@@ -60,8 +60,11 @@ class Residual:
         spec: FeatureSpec = V1,
         half_lives: Sequence[float | None] = HALF_LIVES,
         name: str | None = None,
+        progress: Callable[[int, int], None] | None = None,
     ):
+        """`progress(done, total)` is called after each regularization/recency fit."""
         self.base, self.analyze, self.spec = base, analyze, spec
+        self.progress = progress
         self.lambdas, self.half_lives = tuple(lambdas), tuple(half_lives)
         self.name = name or f"residual({base.name})"
         self.w: np.ndarray | None = None
@@ -84,6 +87,7 @@ class Residual:
         self.blocks = {"train": (tr_blocks, tr_index), "val": (va_blocks, va_index)}
         best = None
         self.val_curve = {}
+        total = len(self.half_lives) * len(self.lambdas)
         for h in self.half_lives:
             s_train = stack(tr_blocks, self.spec, recency_weights(tr_index, h))
             w = None
@@ -95,6 +99,8 @@ class Residual:
                 key = (nll, h is not None, -lam)
                 if best is None or key < best[0]:
                     best = (key, w, lam, h)
+                if self.progress:
+                    self.progress(len(self.val_curve), total)
         _, self.w, self.lam, self.half_life = best
         self.n_train = len(tr_blocks)
         self.cov = weight_covariance(

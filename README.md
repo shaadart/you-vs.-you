@@ -90,6 +90,16 @@ the player whose Twin was built most recently. With no games yet, it asks for th
 **Show me your chess** (Chess.com, Lichess or a PGN file), then builds your Twin,
 showing each stage as it goes.
 
+- **Home:** a position from your own recent games that you have faced many times.
+  Make your move, and it shows what you usually play there and what your Twin would
+  play. Before you have games, your first move is compared with players near 1500.
+- **Building your Twin:** the screen says what is happening, how far along it is,
+  and about how long is left. The time comes from the pace so far, your last build,
+  or this machine's past speed, and it says which. The first build is the slowest
+  (about half an hour for 2,000 games on a 12-core machine at Quick; EXPERIMENTS
+  E8.1). Later
+  builds only read new games, unless you change the analysis depth. You can leave
+  the page: the work continues, and a quiet indicator in the top bar follows you.
 - **Play:** "What do you want to do with yourself?" → choose which version of
   yourself to meet: Current You, Older You, or Bullet/Blitz/Rapid You. The board
   is the whole screen. Drag, click, or press `/` and type a move (`Nf3`, `O-O`).

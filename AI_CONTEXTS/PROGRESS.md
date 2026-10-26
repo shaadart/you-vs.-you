@@ -583,3 +583,60 @@ independent player.
     past positions.
   - There are no clocks, so "time" in game is elapsed time.
   - Versions are approximations (D39).
+
+## 2026-10-26: Design refinement "Symphony" (owner request: refine, don't reinvent)
+
+- **Geist Pixel for titles only** (Square, OFL, npm `geist` 1.8.2, 28 KB, bundled with
+  its license). It sets the home question, "YOU WON.", "SHOW ME YOUR CHESS.", the
+  portrait, archive years, build status and the ritual's second YOU (your Twin, in
+  pixels, under you in the serif). Every sentence stays in Newsreader or Plex Mono.
+  The portrait's echo became a faint serif YOU behind the pixel one. D47.
+- **Home shows instead of telling.**
+  - A real position from your recent games that you have faced often; answer it and
+    see what you usually play there and what your Twin would play (two arrows, the
+    distribution in the machine voice).
+  - First visit: "Play against yourself." Your first move is compared with players
+    near 1500 (the human model), then `SHOW ME YOUR CHESS`. The home no longer
+    redirects to import.
+  - New `/api/glimpse` (GET a position, POST an answer).
+- **Time made understandable** (D44, D45).
+  - Stage fractions come from real counts. `Job.remaining()` uses the live pace or a
+    plan, and the plan rests on the last build, this machine's calibrated pace, or
+    the measured presets ("roughly").
+  - Every start button shows its cost first (`ABOUT 1 H 10 MIN · EVERY GAME IS READ
+    AGAIN AT THE NEW DEPTH`).
+  - The build screen lists every stage: done ones with their times, the current
+    one's count, and the rest faint.
+  - First-time note; "You can leave this page."
+  - Twins now save `stage_seconds` and per-build cache counts.
+- **Continuity** (D46).
+  - Starting work while it runs joins it (`joined: true`, was a 409 "already
+    working" dead end).
+  - One job watcher feeds a quiet top-bar indicator, Home and Settings. A finished
+    job turns the indicator ochre ("YOUR TWIN IS READY").
+- Verified:
+  - `uv run pytest -q`: 148 passed. ruff is clean. `node tests/js/ui_check.js` passes
+    (25 requests: glimpse in both modes, first-visit home, joining, the indicator,
+    time words, the build screen).
+  - Real runs on copies of homes (E8.1): a cached rebuild through the page (estimate
+    about 2 min, actual 1:36) and a first build (planned 1,830 s, actual 1,909 s).
+  - Headless-Firefox screenshots: desktop light, mobile dark.
+- Bugs caught by real runs:
+  1. **The shared cache's lifetime totals were saved as a build's own work.** The
+     owner's 156 s rebuild claimed 137,977 computed engine searches. Training now
+     records deltas; older profiles are read with a plausibility guard.
+  2. **A first glimpse answer took 8 s, then 5 s.** A CPU-bound Python thread
+     (decision-kind counts at startup) convoyed the model's interpreter-lock
+     handoffs. Kind counts moved to the reflection, over the Twin's 2,000-game window
+     (D48).
+  3. **The machine suspended for 61 minutes during the first-build test.**
+     Wall-clock timing made the live estimate 5,807 s right after waking. Job timing
+     is now monotonic.
+  4. **The Thorough estimate first said 38 min.** It used another laptop's preset
+     speed; calibration from this machine's own cold build gives 42 min. A
+     depth-change re-read now reuses cached model results, as it really does.
+  5. The empty fragments block left a gap above "MEET YOURSELF". The glimpse's
+     machine line inherited the serif size.
+- **The owner's own home** was only read: the analysis of their two Twins and the
+  plans for each depth. They had done a full forget → import → cold build (1,843 s)
+  → rebuild themselves earlier that afternoon.

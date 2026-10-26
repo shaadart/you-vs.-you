@@ -73,6 +73,13 @@ const REFLECTION = {
     here_human: 0, here_twin: 0, here_total: 0 }],
   version: VERSIONS[0],
 };
+const GLIMPSE = { id: 7, mode: "yours", fen: START, orientation: "white", last_move: null, seen: 80, position: "008341",
+  number: "1.", legal: [{ uci: "e2e4", san: "e4" }, { uci: "d2d4", san: "d4" }, { uci: "g1f3", san: "Nf3" }] };
+const PEOPLE = { ...GLIMPSE, id: 8, mode: "people", seen: 0 };
+let glimpseMode = "yours";
+const RUNNING = { id: 3, kind: "build", stage: "REMEMBERING", stages: ["REMEMBERING"], status: "running", error: null,
+  result: {}, plan: { REMEMBERING: 1500, "FINDING PATTERNS": 300 }, meta: { first: true, basis: "this machine" },
+  durations: {}, fraction: 0.4, fragments: ["DECISION 26,404 OF 66,011 · 52/S"], eta: 1560, eta_basis: "live", seconds: 192 };
 let server = { ...base }, home = { ...HOME }, job = null;
 const calls = [];
 const reply = (s, ok = true) => ({ ok, json: async () => s });
@@ -83,6 +90,19 @@ global.fetch = async (path, opts) => {
   if (path === "/api/versions") return reply({ versions: VERSIONS });
   if (path === "/api/reflection") return reply(REFLECTION);
   if (path === "/api/job") return reply({ job });
+  if (path === "/api/archive") return reply({ player: "me", years: [] });
+  if (path === "/api/settings" && !body) return reply({ player: "me", players: ["me"], prefs: { speed: "lite", workers: null, temperature: null },
+    presets: { lite: { candidates: 3, nodes: 3000, rate: 70 } }, accounts: [{ platform: "chesscom", username: "me", last_import: null }],
+    storage: { home: "/h", games_bytes: 1, analysis_bytes: 1, twin_bytes: 1, played_games: 0 }, cores: 12, default_workers: 4,
+    twin: { built: "2026-10-26T00:00:00Z", depth: "lite" }, can_import: true, forget_word: "FORGET",
+    estimate: { seconds: 100, new_decisions: 0, first: false, rereads: false } });
+  if (path === "/api/glimpse" && !body) return reply(glimpseMode === "yours" ? GLIMPSE : PEOPLE);
+  if (path === "/api/glimpse") return reply(glimpseMode === "yours"
+    ? { mode: "yours", you: { uci: body.uci, san: "e4", count: 2, p: 0.1 }, usual: { uci: "d2d4", san: "d4", count: 63 }, seen: 80,
+        twin: [{ uci: "d2d4", san: "d4", p: 0.71 }, { uci: "e2e4", san: "e4", p: 0.12 }, { uci: "g1f3", san: "Nf3", p: 0.08 }] }
+    : { mode: "people", you: { uci: body.uci, san: "e4", p: 0.41 }, rating: 1500,
+        people: [{ uci: "e2e4", san: "e4", p: 0.41 }, { uci: "d2d4", san: "d4", p: 0.31 }, { uci: "g1f3", san: "Nf3", p: 0.09 }] });
+  if (path === "/api/build" || path === "/api/import") { job = RUNNING; return reply({ job, joined: true }); }
   if (path === "/api/new") server = { ...base, human_color: body.color, human_to_move: body.color === "white", opponent_to_move: body.color !== "white" };
   if (path === "/api/move") {
     await new Promise(r => setTimeout(r, 5));  // the server takes a moment
@@ -111,11 +131,28 @@ const FORBIDDEN = /\b(ai|bot|engine|computer)\b/i;
   assert(byId["home-summary"].textContent === "10,734 games · 6 years · built 24.10.26", "summary " + byId["home-summary"].textContent);
   assert(byId["home-play"].textContent === "Play yourself", "primary action");
 
-  // no games yet: the home gives way to "SHOW ME YOUR CHESS."
-  home = { ...HOME, games: 0, has_twin: false, player: null, built: null };
+  // show, don't tell: a real position you know; answer it, and see yourself and your Twin
+  await tick();
+  assert(byId["glimpse-prompt"].textContent === "You've been here 80 times. Your move.", "glimpse prompt");
+  await P.glimpseClick("e2"); await P.glimpseClick("e4"); await tick();
+  assert(JSON.stringify(calls.find(c => c[0] === "/api/glimpse" && c[1])[1]) === '{"id":7,"uci":"e2e4"}', "glimpse answer sent");
+  assert(byId["glimpse-you"].textContent === "You've played e4 here twice. Usually d4: 63 of 80.", "you line: " + byId["glimpse-you"].textContent);
+  assert(byId["glimpse-twin"].textContent === "Your Twin would play d4.", "twin line");
+  assert(byId["glimpse-machine"].innerHTML.includes('<span class="san">d4</span> 0.71'), "twin distribution keeps SAN case");
+  assert(byId["glimpse-board"].children.find(g => g.attrs.class === "arrows").children.length === 2, "two arrows");
+  assert(!byId["glimpse-again"].hidden && byId["glimpse-again"].textContent === "Another position", "another");
+
+  // first visit: nothing to redirect to; the home itself shows how it works
+  home = { ...HOME, games: 0, has_twin: false, player: null, built: null, years: [] }; glimpseMode = "people";
   P.go(""); await tick(); await tick(); await tick();
-  assert(P.ui.route === "import" && !byId["s-import"].hidden, "onboarding redirect, route " + P.ui.route);
-  home = { ...HOME };
+  assert(P.ui.route === "home" && byId["home-question"].textContent === "Play against yourself.", "first-visit headline");
+  assert(byId["home-play"].textContent === "Show me your chess", "first-visit action");
+  assert(byId["glimpse-prompt"].textContent === "Make a first move.", "people prompt");
+  await P.glimpseClick("e2"); await P.glimpseClick("e4"); await tick();
+  assert(byId["glimpse-you"].textContent === "About 41% of players near 1500 would play e4 too.", "people line");
+  assert(byId["glimpse-twin"].textContent === "Yours will learn which one you would play.", "why line");
+  assert(byId["glimpse-again"].textContent === "Try another move", "try again");
+  home = { ...HOME }; glimpseMode = "yours";
 
   // the ritual: YOU -> YOU -> PLAY, with versions framed as yourself
   P.go("meet"); await tick(); await tick();
@@ -211,7 +248,9 @@ const FORBIDDEN = /\b(ai|bot|engine|computer)\b/i;
   assert(C({ ...REFLECTION, differed: 1 }).parted === "You and your Twin parted ways once.", "once");
   const copies = [P.statusText(), P.homeSummary(HOME), ...Object.values(C(REFLECTION)),
     ...Object.values(P.differenceCopy(REFLECTION.divergences[0])),
-    ...["new", "unusual", "familiar"].flatMap(k => Object.values(P.whisperCopy({ kind: k, position: "1", likeness: 0.1, seen: 3 })))];
+    ...["new", "unusual", "familiar"].flatMap(k => Object.values(P.whisperCopy({ kind: k, position: "1", likeness: 0.1, seen: 3 }))),
+    byId["glimpse-you"].textContent, byId["glimpse-twin"].textContent, byId["home-question"].textContent,
+    P.timeLeft(100), P.estimateLine({ seconds: 10, first: true }), P.estimateLine({ seconds: 10, rereads: true })];
   for (const text of copies) assert(!FORBIDDEN.test(String(text || "")), "forbidden word in: " + text);
 
   server = { ...base, over: { result: "1-0", reason: "checkmate" } }; await P.api("/api/state");
@@ -219,12 +258,35 @@ const FORBIDDEN = /\b(ai|bot|engine|computer)\b/i;
   server = { ...base, human_color: "black", over: { result: "1-0", reason: "checkmate" } }; await P.api("/api/state");
   assert(P.statusText() === "Checkmate. Your Twin won.", "loss phrasing");
 
-  // building: stages appear as they are reached, never a progress bar
-  P.renderJob({ stage: "COMPARING DECISIONS", stages: ["FINDING YOUR GAMES", "REMEMBERING", "FINDING PATTERNS", "COMPARING DECISIONS"],
-    fragments: ["DECISION 1 OF 2 · 60/S"], status: "running", result: { found: 4862 } });
-  assert(byId["build-head"].textContent === "4,862 games found." && byId["build-sub"].textContent === "We're going through them.", "build words");
-  assert(byId.stages.children.map(li => li.textContent).join() === "REMEMBERING,FINDING PATTERNS,COMPARING DECISIONS", "stages so far");
-  assert(byId.stages.children[2].className.includes("now"), "current stage marked");
+  // time, in words that never look more exact than they are
+  assert(P.timeLeft(20) === "Less than a minute left." && P.timeLeft(70) === "About a minute left.", "short times");
+  assert(P.timeLeft(260) === "About 4 minutes left." && P.timeLeft(1560) === "About 25 minutes left.", "minutes, coarser when long");
+  assert(P.timeLeft(4900) === "About 1 hour 20 minutes left." && P.timeLeft(null) === "", "hours, and no number without a basis");
+  assert(P.estimateLine({ seconds: 1840, first: true, basis: "measured" }) === "ROUGHLY 30 MIN · THE FIRST TIME", "first estimate");
+  assert(P.estimateLine({ seconds: 3900, rereads: true }) === "ABOUT 1 H 05 MIN · EVERY GAME IS READ AGAIN AT THE NEW DEPTH", "depth change");
+  assert(P.estimateLine({ seconds: 100, new_decisions: 1200 }) === "ABOUT 2 MIN · 1,200 NEW DECISIONS TO READ", "rebuild");
+
+  // work in progress is joined, never refused, and follows you around the app
+  P.go("settings"); await tick(); await tick();
+  await P.pollJob();
+  P.ui.jobAcknowledged = false;
+  const b0 = calls.length;
+  await byId["set-rebuild"].click(); await tick(); await tick();
+  assert(calls.some((c, i) => i >= b0 && c[0] === "/api/build") && P.ui.route === "build", "rebuild joins and shows the work");
+  assert(byId["build-head"].textContent === "Building your Twin." && byId["build-eta"].textContent === "About 25 minutes left.", "build head + eta");
+  assert(byId["build-eta-machine"].textContent === "ELAPSED 3:12 · FROM THE PACE SO FAR", "basis is stated");
+  assert(byId["build-first"].textContent === "The first time is the slowest. After this, only new games are read." && !byId["build-first"].hidden, "first-time note");
+  assert(byId.stages.children.map(li => li.className).join() === "now,todo,todo,todo,todo", "how far along");
+  assert(byId.stages.children[0].children[1].textContent === "DECISION 26,404 OF 66,011 · 52/S", "current stage detail");
+  assert(!byId["build-leave"].hidden, "you may leave");
+  P.go("archive"); await tick(); await tick();
+  assert(!byId["job-pill"].hidden && byId["job-pill-text"].innerHTML.includes("ABOUT 25 MIN"), "pill elsewhere: " + byId["job-pill-text"].innerHTML);
+  P.renderJob({ ...RUNNING, kind: "import", stage: "COMPARING DECISIONS", stages: ["FINDING YOUR GAMES", "REMEMBERING", "FINDING PATTERNS", "COMPARING DECISIONS"],
+    durations: { "FINDING YOUR GAMES": 75, REMEMBERING: 1490, "FINDING PATTERNS": 300 }, result: { found: 4862 }, meta: {} });
+  assert(byId["build-head"].textContent === "4,862 games found." && byId["build-sub"].textContent === "We're going through them.", "import then build words");
+  assert(byId.stages.children.map(li => li.className).join() === "done,done,done,now,todo,todo", "stages done and to come");
+  assert(byId.stages.children[1].children[1].textContent === "24:50", "finished stages keep their time");
+  job = null;
 
   console.log("ui checks passed:", calls.length, "requests");
   process.exit(0);

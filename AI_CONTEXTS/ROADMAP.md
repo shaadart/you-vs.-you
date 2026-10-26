@@ -199,6 +199,9 @@ per-platform Elo offsets; the license decision is the owner's.
   versions (years and time controls), whispers, the reflection with "see the
   difference", the archive, the portrait, settings with import/rebuild/forget,
   and staged builds (D38–D43, PROGRESS).
+- **Symphony** (2026-10-26): refinements. Geist Pixel titles, a home that
+  demonstrates itself, real time-left estimates, and continuity of background work
+  (D44–D48, E8.1).
 
 ## Future research (spec §5; only with measurement)
 

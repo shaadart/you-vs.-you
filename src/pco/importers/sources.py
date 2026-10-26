@@ -10,7 +10,7 @@ import io
 import json
 import re
 import urllib.parse
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,6 +61,16 @@ def pgn_text_records(text: str) -> Iterator[RawRecord]:
             yield RawRecord("pgn", chunk)
 
 
+def lichess_game_count(http: Http, username: str) -> int | None:
+    """The account's total number of games (all variants), or None when unavailable.
+    Only used to tell how far along an import is."""
+    try:
+        data = http.get_json(f"{LICHESS_API}/api/user/{urllib.parse.quote(username)}")
+        return int(data["count"]["all"])
+    except (HttpError, KeyError, TypeError, ValueError):
+        return None
+
+
 def lichess_records(
     http: Http,
     username: str,
@@ -105,9 +115,14 @@ _ARCHIVE_MONTH = re.compile(r"/games/(\d{4})/(\d{2})$")
 
 
 def chesscom_records(
-    http: Http, username: str, *, since_month: str | None = None
+    http: Http,
+    username: str,
+    *,
+    since_month: str | None = None,
+    on_month: Callable[[int, int], None] | None = None,
 ) -> Iterator[RawRecord]:
-    """Walk monthly archives oldest first; skip months before `since_month` ('YYYY-MM')."""
+    """Walk monthly archives oldest first; skip months before `since_month` ('YYYY-MM').
+    `on_month(done, total)` is called as each month to read is started."""
     user = urllib.parse.quote(username.lower())
     try:
         archives = http.get_json(f"{CHESSCOM_API}/player/{user}/games/archives")["archives"]
@@ -115,10 +130,15 @@ def chesscom_records(
         if exc.status == 404:
             raise SourceError(f"chess.com user {username!r} not found") from exc
         raise SourceError(str(exc)) from exc
-    for url in archives:
+
+    def wanted(url: str) -> bool:
         m = _ARCHIVE_MONTH.search(url)
-        if m and since_month and f"{m.group(1)}-{m.group(2)}" < since_month:
-            continue
+        return not (m and since_month and f"{m.group(1)}-{m.group(2)}" < since_month)
+
+    months = [url for url in archives if wanted(url)]
+    for done, url in enumerate(months):
+        if on_month:
+            on_month(done, len(months))
         try:
             games = http.get_json(url).get("games", [])
         except HttpError as exc:
