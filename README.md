@@ -126,7 +126,6 @@ Honestly:
 - **This was measured on games it had never seen.** Each player's newest games were
   held back and used only for testing.
 
-The exact numbers are in [`AI_CONTEXTS/EXPERIMENTS.md`](AI_CONTEXTS/EXPERIMENTS.md).
 
 ## What it isn't
 
