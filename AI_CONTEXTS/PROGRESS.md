@@ -482,3 +482,39 @@ independent player.
    +500 for the owner). Fixed and verified interior.
 
 **Decisions:** ARCHITECTURE D32–D36.
+
+## 2026-10-26: Interface iteration "Mirror" (owner request: premium, minimal, human/machine duality)
+
+- Spec: `docs/DESIGN.md` covers principles, layout, interactions, typography and a
+  palette with WCAG ratios (every text token ≥ 5.0:1 in both themes, computed),
+  plus accessibility and third-party assets.
+- `src/pco/play/static/index.html` rewritten:
+  - Paper and Graphite themes.
+  - Bundled Newsreader (human voice) and IBM Plex Mono (machine voice).
+  - cburnett SVG pieces, replacing Unicode glyphs that depended on system fonts.
+  - Pointer drag with a ghost origin, click, and typed SAN/UCI moves (`/`).
+  - An on-board promotion chooser.
+  - A probability spectrum with hover ghost arrows; the played move is always
+    shown, even when it is an outlier.
+  - The last move tinted by owner (ochre for the human, cobalt for the machine).
+  - Uncertainty-paced replies.
+  - A native `<dialog>` for new games (color incl. random, temperature showing the
+    fitted value).
+  - Two-step resign, inline errors (no `alert()`), shortcuts (`/ N F Esc ?`),
+    synthesized sound with a remembered toggle, reduced-motion support, and a
+    mobile single column with a sticky action bar.
+- `play/server.py`: a whitelisted `/static/fonts/*.woff2` route (traversal and
+  other files 404), `legal` with SAN, structured opponent fields, and
+  per-response Cache-Control.
+- Verified:
+  - `node tests/js/ui_check.js` exercises 11 flows on the real page script.
+  - `uv run pytest -q`: 136 passed (3 new server tests).
+  - Headless-Firefox screenshots at 1440×900 in light and dark, and at 390×844 on
+    a live personal-opponent server.
+- Bugs caught by the screenshots:
+  1. The `hidden` attribute was overridden by `display` styles, so "Retry" showed
+     during play. Fixed with a global `[hidden]` rule.
+  2. Latency was uppercased ("MS").
+  3. An outlier sampled move (p < 0.005) displayed as "p 0.00" and was missing
+     from the spectrum.
+  The suspected square-color inversion was ruled out by sampling pixels.

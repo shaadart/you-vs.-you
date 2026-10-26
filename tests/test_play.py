@@ -265,3 +265,35 @@ def test_maia_sampling_is_reproducible_with_seed(maia3_prior):
         return [c.uci for c in s.choices if c]
 
     assert moves(11) == moves(11)
+
+
+def test_server_serves_only_bundled_fonts(server):
+    srv, _, _ = server
+    status, body = call(srv, "GET", "/static/fonts/newsreader.woff2")
+    assert status == 200 and body[:4] == b"wOF2"
+    for path in (
+        "/static/fonts/../index.html",
+        "/static/fonts/OFL-Newsreader.txt",
+        "/static/fonts/missing.woff2",
+        "/static/index.html",
+    ):
+        assert call(srv, "GET", path)[0] == 404, path
+
+
+def test_state_carries_san_for_typed_moves_and_structured_opponent(server):
+    srv, _, _ = server
+    _, state = call(srv, "GET", "/api/state")
+    assert {"uci": "g1f3", "san": "Nf3"} in state["legal"]
+    assert len(state["legal"]) == len(state["legal_moves"]) == 20
+    opp = state["opponent"]
+    assert opp["personal"] is False and opp["name"] is None and opp["model"] == "test-uniform"
+    assert opp["default_temperature"] == opp["temperature"]
+
+
+def test_page_uses_no_remote_resources(server):
+    srv, _, _ = server
+    _, page = call(srv, "GET", "/")
+    text = page.decode()
+    assert "/static/fonts/" in text
+    for remote in ("https://", "fonts.googleapis", "cdn."):
+        assert remote not in text

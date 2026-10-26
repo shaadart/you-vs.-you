@@ -40,7 +40,9 @@ src/pco/
   play/opponent.py    [impl] Opponent protocol, MoveChoice, PriorOpponent (samples the prior; no fallback)
   play/session.py     [impl] GameSession: turns, legality, termination, resignation, generated-PGN export
   play/server.py      [impl] PlayApp + stdlib ThreadingHTTPServer on 127.0.0.1 (JSON API)
-  play/static/index.html [impl] self-contained page: inline-SVG board, click-to-move, promotion picker
+  play/static/index.html [impl] "Mirror" UI (docs/DESIGN.md): inline cburnett piece symbols, drag/click/typed moves,
+                             on-board promotion, spectrum + ghost arrows, uncertainty pacing, dialog, shortcuts
+  play/static/fonts/  [impl] bundled Newsreader + IBM Plex Mono woff2 (OFL), served by a whitelisted /static route
   decisions/episodes.py [impl] DecisionEpisode (observed, pre-move only) + player_episodes() chronological
   decisions/cache.py  [impl] AnalysisCache: separate SQLite file under cache_dir (prior + engine results)
   decisions/analysis.py [impl] AnalysisConfig, prior_candidates (adaptive), analyze_engine (shared live/offline),
@@ -380,6 +382,16 @@ limit, never required). Planned: a hardware profile (It. 7).
     committed.
 - **D36 Live play defaults to 1 torch thread** (`PCO_LIVE_THREADS`). That is
   fastest at batch 1 (E2.1b). Training keeps `PCO_TORCH_THREADS`.
+
+- **D37 Interface "Mirror" (docs/DESIGN.md) stays dependency-free and offline.**
+  - Fonts are bundled, about 225 KB, served only by a strict `/static/fonts/*.woff2`
+    pattern. The pieces are inline SVG symbols, sanitized at import.
+  - Two visual voices: human (serif, ochre) and machine (mono, cobalt).
+  - The state API adds `legal` (UCI+SAN) for typed moves, and structured opponent
+    fields (`name`, `model`, `default_temperature`).
+  - The played move always appears in the spectrum, even when it is an outlier.
+  - The opponent's reply is paced by 250 ms + 750 ms × (1 − p). This is
+    presentation only; the model's latency is still reported.
 
 ## Known limitations
 

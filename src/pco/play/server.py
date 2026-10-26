@@ -8,6 +8,7 @@ JSON POST bodies (so other websites cannot drive it with simple form posts).
 from __future__ import annotations
 
 import json
+import re
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -45,6 +46,7 @@ class PlayApp:
         self.last_choice: dict[str, Any] | None = None
         self.error: str | None = None
         self.saved_pgn: str | None = None
+        self.default_temperature = temperature  # the fitted value for personal profiles
         self.new_game("white", elo, temperature)
 
     # ----------------------------------------------------------------- actions
@@ -101,10 +103,27 @@ class PlayApp:
 
     # ----------------------------------------------------------------- view
 
+    def _opponent_view(self) -> dict[str, Any]:
+        opp = self.session.opponent
+        profile = getattr(opp, "profile", None)
+        prior = getattr(opp, "prior", None)
+        return {
+            "label": opp.label,
+            "personal": profile is not None,
+            "name": profile.player if profile is not None else None,
+            "model": profile.created_at
+            if profile is not None
+            else getattr(prior, "model_id", None),
+            "elo": self.elo,
+            "temperature": self.temperature,
+            "default_temperature": self.default_temperature,
+        }
+
     def state(self) -> dict[str, Any]:
         s = self.session
         over = s.over
         last = s.board.move_stack[-1].uci() if s.board.move_stack else None
+        legal = [{"uci": u, "san": s.board.san(chess.Move.from_uci(u))} for u in s.legal_moves()]
         return {
             "fen": s.board.fen(),
             "turn": "white" if s.board.turn == chess.WHITE else "black",
@@ -112,16 +131,12 @@ class PlayApp:
             "human_to_move": s.human_to_move,
             "opponent_to_move": s.opponent_to_move,
             "legal_moves": s.legal_moves(),
+            "legal": legal,  # with SAN, for typed move entry
             "san_moves": s.san_moves(),
             "last_move": last,
             "check": s.board.is_check(),
             "over": None if over is None else {"result": over.result, "reason": over.reason},
-            "opponent": {
-                "label": s.opponent.label,
-                "personal": getattr(s.opponent, "profile", None) is not None,
-                "elo": self.elo,
-                "temperature": self.temperature,
-            },
+            "opponent": self._opponent_view(),
             "last_choice": self.last_choice,
             "error": self.error,
             "saved_pgn": self.saved_pgn,
@@ -130,6 +145,18 @@ class PlayApp:
 
 def _page() -> bytes:
     return files("pco.play").joinpath("static/index.html").read_bytes()
+
+
+# Only bundled font files are served; the pattern rules out traversal by construction.
+_STATIC = re.compile(r"^/static/fonts/([a-z0-9-]+\.woff2)$")
+
+
+def _static(path: str) -> bytes | None:
+    m = _STATIC.match(path)
+    if m is None:
+        return None
+    resource = files("pco.play").joinpath("static/fonts").joinpath(m.group(1))
+    return resource.read_bytes() if resource.is_file() else None
 
 
 def make_handler(app: PlayApp, allowed_hosts: set[str]) -> type[BaseHTTPRequestHandler]:
@@ -143,7 +170,8 @@ def make_handler(app: PlayApp, allowed_hosts: set[str]) -> type[BaseHTTPRequestH
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            if "Cache-Control" not in (extra or {}):
+                self.send_header("Cache-Control", "no-store")
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
             self.end_headers()
@@ -174,6 +202,13 @@ def make_handler(app: PlayApp, allowed_hosts: set[str]) -> type[BaseHTTPRequestH
                     pgn,
                     "application/x-chess-pgn",
                     {"Content-Disposition": 'attachment; filename="pco-game.pgn"'},
+                )
+            elif (font := _static(self.path)) is not None:
+                self._send(
+                    HTTPStatus.OK,
+                    font,
+                    "font/woff2",
+                    {"Cache-Control": "public, max-age=31536000, immutable"},
                 )
             else:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})

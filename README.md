@@ -83,6 +83,18 @@ not make the imitation more accurate, so lite is the default.
 Run `uv run pco eval YOUR_NAME` to measure it on your own games. All experiments
 and their exact numbers are in `AI_CONTEXTS/EXPERIMENTS.md`.
 
+## The interface
+
+`pco play` opens a single, quiet screen ("Mirror"; full spec in `docs/DESIGN.md`).
+- **The board:** drag or click to move, or press `/` and type a move (`Nf3`,
+  `exd5`, `O-O`).
+- **The panel:** shows what the model just decided, the probability it gave its
+  top candidates, and the move it actually played. Hover a candidate to see it
+  drawn on the board.
+- **Pacing:** the opponent replies after a pause that grows with its uncertainty.
+- **Shortcuts:** `N` new game, `F` flip board, `?` all shortcuts.
+- **Theme:** light and dark follow your system.
+
 ## What it is not
 
 - **Not a copy of your mind.** It is a statistical imitation of your observable
@@ -143,6 +155,10 @@ Engineering notes, decisions, experiments and handoff for contributors live in
 `docs/MASTER_SPEC.md`.
 
 ## Licensing
+
+Bundled interface assets: the chess pieces are by Colin M.L. Burnett (GPLv2+, via
+lichess-org/lila); the Newsreader and IBM Plex Mono fonts are SIL OFL 1.1 (license
+texts in `src/pco/play/static/fonts/`).
 
 Maia-3 (CSSLab) is AGPL-3.0 and is imported in-process; Stockfish is GPL-3.0 and
 runs as a separate process. If you distribute pco, it must be AGPL-compatible. The
