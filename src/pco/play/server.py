@@ -1,130 +1,188 @@
-"""Localhost play server: one page + a small JSON API around a single GameSession.
+"""Localhost app server: the page plus a small JSON API around the Twin, one game at a
+time, and background jobs (bringing in games, rebuilding the Twin).
 
-Stdlib only and offline: the page is self-contained (inline SVG board, no CDN). The
-server binds to 127.0.0.1, rejects foreign Host headers (DNS rebinding) and requires
-JSON POST bodies (so other websites cannot drive it with simple form posts).
+Stdlib only and offline: the page is self-contained (inline SVG board, bundled fonts, no
+CDN). The server binds to 127.0.0.1, rejects foreign Host headers (DNS rebinding) and
+requires JSON POST bodies (so other websites cannot drive it with simple form posts).
 """
 
 from __future__ import annotations
 
 import json
+import os
+import random
 import re
+import statistics
 import threading
-from collections.abc import Callable
+import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
-from pathlib import Path
 from typing import Any
 
 import chess
 
-from pco.play.opponent import DEFAULT_PLAY_TEMPERATURE, Opponent, OpponentError
+from pco.play.jobs import JobBusy, JobRunner
+from pco.play.library import Library, LibraryError, default_workers
+from pco.play.opponent import OpponentError
 from pco.play.session import GameSession, SessionError
+from pco.play.twin import TwinService
+from pco.presets import PRESETS
 
-OpponentFactory = Callable[[int, float], Opponent]  # (elo, temperature) -> Opponent
+MAX_BODY = 64 * 1024 * 1024  # a PGN of a whole career fits comfortably
+FORGET_WORD = "FORGET"
+
+
+def preset_name(config: dict[str, Any]) -> str | None:
+    return next((n for n, p in PRESETS.items() if vars(p.analysis) == config), None)
 
 
 class PlayApp:
-    """Thread-safe game state shared by request handlers."""
+    """Thread-safe app state shared by request handlers."""
 
     def __init__(
         self,
-        make_opponent: OpponentFactory,
-        played_dir: Path,
-        elo: int = 1500,
-        temperature: float = DEFAULT_PLAY_TEMPERATURE,
+        library: Library,
+        prior,
+        evaluator,
+        cache,
+        player=None,
+        rng=None,
+        temperature: float | None = None,
     ):
-        self.make_opponent = make_opponent
-        self.played_dir = played_dir
-        self.lock = threading.Lock()
+        self.library = library
+        self.cache = cache
+        self.rng = rng or random.Random()
+        self.temperature = temperature  # command-line override for every new game
+        self.lock = threading.Lock()  # the game
         # The HTTP server uses a new thread per request, but torch/OpenMP thread pools are
         # per calling thread; one persistent inference thread avoids rebuilding them.
         self.inference = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pco-inference")
+        self.jobs = JobRunner()
+        self.twin = TwinService(None, None, list, prior, evaluator, cache)
+        self.session: GameSession | None = None
+        self._reset_game()
+        self.select(library.pick_player(player))
+
+    def select(self, player: str | None) -> None:
+        """Point the app at a player (and their newest Twin, if any)."""
+        loader = (lambda: self.library.load_games(player)) if player else list
+        self.twin.reload(player, self.library.latest_profile(player), loader)
+        self.twin.warm()
+
+    # ----------------------------------------------------------------- the game
+    def _reset_game(self) -> None:
+        self.version: dict[str, Any] | None = None
+        self.analyses: dict[int, tuple] = {}  # ply -> the Twin's view of your decision
+        self.memory: dict[str, Any] = {}  # whisper bookkeeping for this game
+        self.whisper: dict[str, Any] | None = None
         self.last_choice: dict[str, Any] | None = None
         self.error: str | None = None
         self.saved_pgn: str | None = None
-        self.default_temperature = temperature  # the fitted value for personal profiles
-        self.new_game("white", elo, temperature)
+        self.started = self.ended = None
+        self._reflection: dict[str, Any] | None = None
 
-    # ----------------------------------------------------------------- actions
+    def _game(self) -> GameSession:
+        if self.session is None:
+            raise SessionError("there is no game; start one")
+        return self.session
 
-    def new_game(self, color: str, elo: int, temperature: float) -> None:
+    def new_game(
+        self, version: str = "current", color: str = "white", temperature: float | None = None
+    ) -> None:
         if color not in ("white", "black"):
             raise SessionError("color must be 'white' or 'black'")
-        if not 0 <= elo <= 4000:
-            raise SessionError("elo must be between 0 and 4000")
-        if not 0 <= temperature <= 3:
+        if temperature is None:
+            temperature = self.temperature
+        if temperature is None:
+            temperature = self.library.prefs()["temperature"]  # None: the Twin's fitted value
+        if temperature is not None and not 0 <= temperature <= 3:
             raise SessionError("temperature must be between 0 and 3")
+        try:
+            opponent = self.twin.opponent(version, temperature, self.rng)
+            view = self.twin.version(version)
+        except (ValueError, OpponentError) as exc:
+            raise SessionError(str(exc)) from exc
         human = chess.WHITE if color == "white" else chess.BLACK
-        self.session = GameSession(self.make_opponent(elo, temperature), human)
-        self.elo, self.temperature = elo, temperature
-        self.last_choice = self.error = self.saved_pgn = None
+        self.session = GameSession(opponent, human)
+        self._reset_game()
+        self.version = {**view, "temperature": opponent.temperature}
+        self.started = time.time()
 
     def human_move(self, uci: str) -> None:
-        self.session.play_human(uci)
+        s = self._game()
+        before = s.board.copy()
+        s.play_human(uci)
+        self.whisper = None
+        if before.legal_moves.count() > 1:
+            try:  # the Twin's view of the position you just faced: whispers + reflection
+                logprobs, engine = self.inference.submit(s.opponent.analyze, before).result()
+            except OpponentError:
+                pass  # no remark; the game goes on
+            else:
+                self.cache.commit()  # never hold the cache's write lock between moves
+                ply = len(before.move_stack)
+                self.analyses[ply] = (logprobs, engine)
+                w = self.twin.whisper(before, uci, logprobs, self.version["id"], self.memory)
+                self.whisper = w and {**w, "ply": ply}
         self._after_move()
 
     def opponent_move(self) -> None:
-        before = self.session.board.copy()
+        s = self._game()
+        before = s.board.copy()
         try:
-            choice = self.inference.submit(self.session.play_opponent).result()
+            choice = self.inference.submit(s.play_opponent).result()
         except OpponentError as exc:
             self.error = str(exc)  # position unchanged; the page offers a retry
             return
+        finally:
+            self.cache.commit()
         self.error = None
         self.last_choice = {
             "uci": choice.uci,
             "san": before.san(chess.Move.from_uci(choice.uci)),
             "probability": choice.probability,
-            "top": [
-                {"uci": u, "san": before.san(chess.Move.from_uci(u)), "probability": p}
-                for u, p in choice.top
-            ],
             "latency_ms": round(choice.latency_ms, 1),
-            "source": choice.source,
-            "likeness": choice.likeness,
         }
         self._after_move()
 
     def resign(self) -> None:
-        self.session.resign()
+        self._game().resign()
         self._after_move()
 
     def _after_move(self) -> None:
-        if self.session.over and self.saved_pgn is None:
-            self.played_dir.mkdir(parents=True, exist_ok=True)
+        s = self.session
+        if s.over and self.saved_pgn is None:
+            self.ended = time.time()
+            played = self.library.settings.played_dir
+            played.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-            path = self.played_dir / f"{stamp}-{id(self.session):x}.pgn"
-            path.write_text(self.session.to_pgn())
+            path = played / f"{stamp}-{id(s):x}.pgn"
+            path.write_text(s.to_pgn())
             self.saved_pgn = str(path)
+            self.cache.commit()
 
-    # ----------------------------------------------------------------- view
-
-    def _opponent_view(self) -> dict[str, Any]:
-        opp = self.session.opponent
-        profile = getattr(opp, "profile", None)
-        prior = getattr(opp, "prior", None)
-        return {
-            "label": opp.label,
-            "personal": profile is not None,
-            "name": profile.player if profile is not None else None,
-            "model": profile.created_at
-            if profile is not None
-            else getattr(prior, "model_id", None),
-            "elo": self.elo,
-            "temperature": self.temperature,
-            "default_temperature": self.default_temperature,
-        }
+    def reflection(self) -> dict[str, Any]:
+        s = self._game()
+        if s.over is None:
+            raise SessionError("the game is not over")
+        if self._reflection is None:
+            future = self.inference.submit(self.twin.reflection, s, self.analyses)
+            self._reflection = {**future.result(), "version": self.version, "san": s.san_moves()}
+        return self._reflection
 
     def state(self) -> dict[str, Any]:
         s = self.session
+        if s is None:
+            return {"game": False}
         over = s.over
         last = s.board.move_stack[-1].uci() if s.board.move_stack else None
         legal = [{"uci": u, "san": s.board.san(chess.Move.from_uci(u))} for u in s.legal_moves()]
         return {
+            "game": True,
             "fen": s.board.fen(),
             "turn": "white" if s.board.turn == chess.WHITE else "black",
             "human_color": "white" if s.human_color == chess.WHITE else "black",
@@ -136,11 +194,180 @@ class PlayApp:
             "last_move": last,
             "check": s.board.is_check(),
             "over": None if over is None else {"result": over.result, "reason": over.reason},
-            "opponent": self._opponent_view(),
+            "version": self.version,
             "last_choice": self.last_choice,
+            "whisper": self.whisper,
             "error": self.error,
             "saved_pgn": self.saved_pgn,
+            "elapsed": round((self.ended or time.time()) - self.started, 1),
         }
+
+    # ----------------------------------------------------------------- views
+    def home(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "player": self.twin.player,
+            "players": self.library.players(),
+            "has_twin": self.twin.has_twin,
+            "games": 0,
+            "job": self.jobs.view(),
+            "game": None,
+        }
+        if self.twin.player:
+            out.update(self.twin.summary())
+        with self.lock:
+            s = self.session
+            if s is not None and s.over is None and s.board.move_stack:
+                out["game"] = {"version": self.version["label"], "plies": len(s.board.move_stack)}
+        return out
+
+    def portrait(self) -> dict[str, Any]:
+        twin = self.twin
+        if not twin.has_twin:
+            raise SessionError("there is no Twin yet")
+        p = twin.profile
+        v = p.validation
+        return {
+            **twin.summary(),
+            "observations": twin.observations(),
+            "versions": twin.versions(),
+            "model": {
+                "rating": p.elo,
+                "elo_offset": p.elo_offset,
+                "temperature": p.play_temperature,
+                "half_life": p.half_life_games,
+                "reg_lambda": p.reg_lambda,
+                "book_alpha": p.book_alpha,
+                "depth": preset_name(p.analysis_config),
+                "decisions": sum((p.data.get("decisions") or {}).values()),
+                "top1": (v.get("model") or {}).get("top1"),
+                "top1_generic": (v.get("generic_maia") or {}).get("top1"),
+                "nll": (v.get("model") or {}).get("nll"),
+                "nll_generic": (v.get("generic_maia") or {}).get("nll"),
+                "prior": p.prior_model,
+                "engine": p.engine_id,
+                "has_covariance": p.weight_cov is not None,
+            },
+        }
+
+    def archive(self) -> dict[str, Any]:
+        twin = self.twin
+        games = twin.games()
+        playable = {v["id"] for v in twin.versions()}
+        style = twin.style_year if twin.has_twin else None
+        by_year: dict[str, list] = {}
+        for g in games:
+            if g.year:
+                by_year.setdefault(g.year, []).append(g)
+        years = []
+        for year in sorted(by_year, reverse=True):
+            rows = by_year[year]
+            vid = "current" if year == style else f"year-{year}"
+            ratings = [g.elo for g in rows if g.elo]
+            first = Counter(
+                g.moves[0]
+                for g in rows
+                if g.white and g.moves and g.start_fen == chess.STARTING_FEN
+            )
+            tempos = Counter(g.time_class or "unknown" for g in rows)
+            years.append(
+                {
+                    "year": year,
+                    "games": len(rows),
+                    "rating": int(statistics.median(ratings)) if ratings else None,
+                    "signature": twin._signature(first),
+                    "tempos": [t for t, _ in tempos.most_common(2)],
+                    "version": vid if vid in playable else None,
+                    "now": year == style,
+                }
+            )
+        return {"player": twin.player, "years": years}
+
+    def settings_view(self) -> dict[str, Any]:
+        lib, p = self.library, self.twin.profile
+        return {
+            "player": self.twin.player,
+            "players": lib.players(),
+            "prefs": lib.prefs(),
+            "presets": {
+                name: {
+                    "candidates": pr.analysis.k_max,
+                    "nodes": pr.analysis.nodes,
+                    "rate": pr.est_decisions_per_s,
+                }
+                for name, pr in PRESETS.items()
+            },
+            "accounts": lib.accounts(self.twin.player),
+            "storage": lib.storage(),
+            "cores": os.cpu_count(),
+            "default_workers": default_workers(),
+            "twin": None
+            if p is None
+            else {
+                "built": p.created_at,
+                "depth": preset_name(p.analysis_config),
+                "prior": p.prior_model,
+                "engine": p.engine_id,
+                "temperature": p.play_temperature,
+                "rating": p.elo,
+                "elo_offset": p.elo_offset,
+                "half_life": p.half_life_games,
+            },
+            "can_import": lib.http is not None,
+            "forget_word": FORGET_WORD,
+        }
+
+    # ----------------------------------------------------------------- jobs
+    def start_import(
+        self, source: str, username: str | None = None, pgn: str | None = None, build: bool = True
+    ):
+        player = self.twin.player
+
+        def work(job, say):
+            result = self.library.import_games(say, player, source, username, pgn)
+            job.result.update(result)  # "4,862 games found." while the build runs
+            self.select(result["player"])
+            if build and (result["new"] > 0 or not self.twin.has_twin):
+                profile = self.library.build(say, result["player"], self.cache)
+                self.select(result["player"])
+                result["built"] = profile.created_at
+            return result
+
+        return self.jobs.start("import", work)
+
+    def start_build(self):
+        player = self.twin.player
+        if not player:
+            raise SessionError("there are no games yet")
+
+        def work(job, say):
+            profile = self.library.build(say, player, self.cache)
+            self.select(player)
+            return {"player": player, "built": profile.created_at}
+
+        return self.jobs.start("build", work)
+
+    def forget(self, what: str, confirm: str) -> None:
+        if confirm != FORGET_WORD:
+            raise SessionError(f"type {FORGET_WORD} to confirm")
+        if self.jobs.busy:
+            raise SessionError("wait for the current work to finish")
+        with self.lock:
+            self.session = None
+            self._reset_game()
+        player = self.twin.player
+        self.library.forget(what, player, self.cache)
+        self.select(player if what == "twin" else None)
+
+    def switch_player(self, name: str) -> None:
+        if self.jobs.busy:
+            raise SessionError("wait for the current work to finish")
+        with self.lock:
+            self.session = None
+            self._reset_game()
+        self.select(self.library.pick_player(name))
+
+    def close(self) -> None:
+        self.inference.shutdown()
 
 
 def _page() -> bytes:
@@ -177,7 +404,7 @@ def make_handler(app: PlayApp, allowed_hosts: set[str]) -> type[BaseHTTPRequestH
             self.end_headers()
             self.wfile.write(body)
 
-        def _json(self, status: int, payload: dict) -> None:
+        def _json(self, status: int, payload: Any) -> None:
             self._send(status, json.dumps(payload).encode(), "application/json")
 
         def _host_ok(self) -> bool:
@@ -186,17 +413,49 @@ def make_handler(app: PlayApp, allowed_hosts: set[str]) -> type[BaseHTTPRequestH
             self._json(HTTPStatus.FORBIDDEN, {"error": "forbidden host"})
             return False
 
+        def _respond(self, compute, game: bool = False) -> None:
+            """Run a view/action; app errors become 409 with a message (and the game)."""
+            try:
+                if game:
+                    with app.lock:
+                        payload = compute()
+                else:
+                    payload = compute()
+            except (SessionError, LibraryError, JobBusy, ValueError) as exc:
+                with app.lock:
+                    state = app.state()
+                self._json(HTTPStatus.CONFLICT, {"error": str(exc), "state": state})
+                return
+            except Exception as exc:  # never drop the connection: the page shows the message
+                self._json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": f"something went wrong: {type(exc).__name__}: {exc}"},
+                )
+                return
+            self._json(HTTPStatus.OK, payload)
+
         def do_GET(self) -> None:
             if not self._host_ok():
                 return
+            views = {
+                "/api/home": app.home,
+                "/api/twin": app.portrait,
+                "/api/archive": app.archive,
+                "/api/versions": lambda: {"versions": app.twin.versions()},
+                "/api/settings": app.settings_view,
+                "/api/job": lambda: {"job": app.jobs.view()},
+            }
             if self.path == "/":
                 self._send(HTTPStatus.OK, _page(), "text/html; charset=utf-8")
             elif self.path == "/api/state":
-                with app.lock:
-                    self._json(HTTPStatus.OK, app.state())
+                self._respond(app.state, game=True)
+            elif self.path == "/api/reflection":
+                self._respond(app.reflection, game=True)
+            elif self.path in views:
+                self._respond(views[self.path])
             elif self.path == "/api/pgn":
                 with app.lock:
-                    pgn = app.session.to_pgn().encode()
+                    pgn = app.session.to_pgn().encode() if app.session else b""
                 self._send(
                     HTTPStatus.OK,
                     pgn,
@@ -221,33 +480,55 @@ def make_handler(app: PlayApp, allowed_hosts: set[str]) -> type[BaseHTTPRequestH
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
+                if length > MAX_BODY:
+                    raise ValueError("body too large")
                 body = json.loads(self.rfile.read(length) or b"{}")
                 if not isinstance(body, dict):
                     raise ValueError("body must be a JSON object")
             except ValueError as exc:
                 self._json(HTTPStatus.BAD_REQUEST, {"error": f"bad request: {exc}"})
                 return
-            actions = {
+
+            def temperature():
+                t = body.get("temperature")
+                return None if t is None else float(t)
+
+            game_actions = {
                 "/api/new": lambda: app.new_game(
+                    str(body.get("version", "current")),
                     str(body.get("color", "white")),
-                    int(body.get("elo", app.elo)),
-                    float(body.get("temperature", app.temperature)),
+                    temperature(),
                 ),
                 "/api/move": lambda: app.human_move(str(body.get("uci", ""))),
                 "/api/opponent": app.opponent_move,
                 "/api/resign": app.resign,
             }
-            action = actions.get(self.path)
-            if action is None:
+            other_actions = {
+                "/api/settings": lambda: {"prefs": app.library.set_prefs(body)},
+                "/api/import": lambda: {
+                    "job": app.start_import(
+                        str(body.get("source", "")),
+                        body.get("username"),
+                        body.get("pgn"),
+                        bool(body.get("build", True)),
+                    ).view()
+                },
+                "/api/build": lambda: {"job": app.start_build().view()},
+                "/api/forget": lambda: (
+                    app.forget(str(body.get("what", "")), str(body.get("confirm", ""))),
+                    app.home(),
+                )[1],
+                "/api/player": lambda: (app.switch_player(str(body.get("name", ""))), app.home())[
+                    1
+                ],
+            }
+            if self.path in game_actions:
+                action = game_actions[self.path]
+                self._respond(lambda: (action(), app.state())[1], game=True)
+            elif self.path in other_actions:
+                self._respond(other_actions[self.path])
+            else:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
-                return
-            with app.lock:
-                try:
-                    action()
-                except (SessionError, ValueError) as exc:
-                    self._json(HTTPStatus.CONFLICT, {"error": str(exc), "state": app.state()})
-                    return
-                self._json(HTTPStatus.OK, app.state())
 
     return Handler
 

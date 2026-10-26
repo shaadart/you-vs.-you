@@ -192,6 +192,14 @@ Acceptance, as verified:
 Not done, recorded: macOS and Windows runs are unverified; there are no
 per-platform Elo offsets; the license decision is the owner's.
 
+## Interface iterations (owner requests after 7) — COMPLETED
+
+- **Mirror** (2026-10-26): the visual identity (docs/DESIGN.md, D37).
+- **Twin** (2026-10-26): the experience of playing yourself. It covers home,
+  versions (years and time controls), whispers, the reflection with "see the
+  difference", the archive, the portrait, settings with import/rebuild/forget,
+  and staged builds (D38–D43, PROGRESS).
+
 ## Future research (spec §5; only with measurement)
 
 - Per-platform rating offsets for mixed-platform players.

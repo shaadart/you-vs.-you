@@ -62,6 +62,11 @@ class PersonalOpponent:
 
     def distribution(self, board: chess.Board) -> dict[str, float]:
         """The personal model's full legal-move distribution for `board`."""
+        return self.analyze(board)[0]
+
+    def analyze(self, board: chess.Board):
+        """(logprobs, engine analysis or None): the distribution plus the engine scores of
+        its live candidate set (reflections compare your move with the twin's)."""
         elo = self.profile.elo
         try:
             # Same path (and canonical precision) as training: offline features were built
@@ -77,6 +82,7 @@ class PersonalOpponent:
             raise OpponentError(f"human prior failed: {exc}") from exc
         logprobs = base.logprobs
         self.last_degraded = None
+        engine = None
         if board.legal_moves.count() > 1:
             cands = prior_candidates(game_dist, self.config)
             try:
@@ -90,7 +96,10 @@ class PersonalOpponent:
                 logprobs = distribution(
                     self.w, featurize(analysis, base.logprobs), base.logprobs, self.profile.spec
                 )
-        return book_blend(self.profile.book, position_key(board), logprobs, self.profile.book_alpha)
+        blended = book_blend(
+            self.profile.book, position_key(board), logprobs, self.profile.book_alpha
+        )
+        return blended, engine
 
     def choose_move(self, board: chess.Board) -> MoveChoice:
         t = time.perf_counter()

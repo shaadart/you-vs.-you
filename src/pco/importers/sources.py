@@ -42,6 +42,11 @@ def pgn_records(path: Path) -> Iterator[RawRecord]:
         text = path.read_text(encoding="latin-1")  # old desktop exports
     except OSError as exc:
         raise SourceError(f"cannot read {path}: {exc}") from exc
+    yield from pgn_text_records(text)
+
+
+def pgn_text_records(text: str) -> Iterator[RawRecord]:
+    """Split multi-game PGN text (e.g. an uploaded file) into per-game raw records."""
     handle = io.StringIO(text)
     starts = []
     while True:

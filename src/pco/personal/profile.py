@@ -62,6 +62,9 @@ class PersonalProfile:
     play_temperature: float
     data: dict[str, Any] = field(default_factory=dict)
     validation: dict[str, Any] = field(default_factory=dict)
+    # approximate covariance of `weights` (observations need clear evidence); older format-2
+    # profiles lack it
+    weight_cov: list[list[float]] | None = None
 
     @property
     def w(self) -> np.ndarray:
@@ -113,11 +116,16 @@ def train_profile(
     half_lives: tuple[float | None, ...] = HALF_LIVES,
     previous: PersonalProfile | None = None,
     recent_games: int | None = None,
+    report: Callable[[str, str], None] | None = None,
 ) -> PersonalProfile:
     """Train a profile; `previous` (the player's last profile) warm-starts the Elo search.
 
     `recent_games` keeps only the player's N most recent dated games (fast training on
-    current behavior); None uses the whole history."""
+    current behavior); None uses the whole history. `report(stage, detail)` receives the
+    build stages shown by the interface: REMEMBERING (analyzing past decisions), FINDING
+    PATTERNS (fitting), COMPARING DECISIONS (validation), RECONSTRUCTING YOU (assembly)."""
+    say = report or (lambda stage, detail: None)
+    say("REMEMBERING", "READING GAMES")
     config = config or AnalysisConfig()
     spec = spec or DEFAULT_SPEC
     t0 = time.perf_counter()
@@ -130,9 +138,19 @@ def train_profile(
     if len(split.games["train"]) < 20 or not split.val:
         raise ValueError(f"{player!r} needs at least ~25 dated games to train a profile")
     builder = DecisionBuilder(prior, make_evaluator, cache, config, workers)
+    total = len(split.train) + len(split.val)
+
+    def remember(offset: int):
+        if report is None:
+            return progress
+        return lambda done, _n, rate: say(
+            "REMEMBERING", f"DECISION {offset + done:,} OF {total:,} · {rate:.0f}/S"
+        )
+
     try:
-        train = builder.analyze(split.train, progress)
-        val = builder.analyze(split.val, progress)
+        train = builder.analyze(split.train, remember(0))
+        val = builder.analyze(split.val, remember(len(split.train)))
+        say("FINDING PATTERNS", f"{len(split.train):,} DECISIONS")
         start = previous.elo_offset if previous is not None else None
         residual = Residual(
             EloOffset(prior, cache, start=start),
@@ -142,6 +160,7 @@ def train_profile(
         )
         model = Book(residual)
         model.fit(split.train, val)
+        say("COMPARING DECISIONS", f"{len(val):,} RECENT DECISIONS")
         choice = [a for a in val if a.engine is not None]
         scorer = MoveScorer(builder.evaluators[0], cache, config)
         sweep = quality_sweep(model.predict(choice), choice, scorer, TEMPERATURES, samples=2)
@@ -150,6 +169,7 @@ def train_profile(
             residual.blocks["train"],
             residual.blocks["val"],
         )
+        say("RECONSTRUCTING YOU", f"TEMPERATURE {play_t:g}")
         drift = behavior_drift(tr_blocks, tr_index, va_blocks, va_index, spec, residual.lam)
         val_model = summarize(per_example(model.predict(choice), choice))
         val_maia = summarize(per_example(GenericPrior(prior.model_id).predict(choice), choice))
@@ -175,6 +195,7 @@ def train_profile(
         elo=last.self_elo,
         elo_offset=residual.base.offset,
         weights=[float(v) for v in residual.w],
+        weight_cov=[[float(f"{v:.6g}") for v in row] for row in residual.cov],
         reg_lambda=residual.lam,
         half_life_games=residual.half_life,
         book_alpha=model.alpha,

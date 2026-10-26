@@ -8,7 +8,7 @@ duplicate. Progress is committed in batches so an interrupted import keeps its w
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
 from pco.importers.normalize import NormalizationError, normalize
@@ -42,11 +42,13 @@ def import_records(
     username: str | None = None,
     player: str | None = None,
     complete: bool = True,
+    progress: Callable[[ImportReport], None] | None = None,
 ) -> ImportReport:
     """Store and normalize records. If `username` is given, games where that name plays
     link the (platform, username) account to `player` (default: the username).
     `complete=False` marks a deliberately partial fetch that later incremental
-    imports must not treat as covering the account's history."""
+    imports must not treat as covering the account's history. `progress(report)` is
+    called at every batch commit."""
     report = ImportReport(run_id=repo.start_run(conn, source, locator, complete))
     conn.commit()
     try:
@@ -76,6 +78,8 @@ def import_records(
                         repo.ensure_account(conn, player, game.platform, side)
             if report.seen % COMMIT_EVERY == 0:
                 conn.commit()
+                if progress:
+                    progress(report)
     except BaseException as exc:  # includes KeyboardInterrupt: keep committed progress
         conn.commit()
         repo.finish_run(conn, report.run_id, report.counts(), "failed", repr(exc))

@@ -24,7 +24,7 @@ from pco.assets import MAIA3_5M, AssetError, ensure_asset, stockfish_asset, stoc
 from pco.config import Settings, load_settings
 from pco.importers.http import Http, UrllibHttp
 from pco.importers.pipeline import ImportReport, import_records
-from pco.importers.sources import SourceError, chesscom_records, lichess_records, pgn_records
+from pco.importers.sources import SourceError, pgn_records
 from pco.presets import DEFAULT_RECENT_GAMES, DEFAULT_SPEED, PRESETS, preset
 from pco.storage import games as repo
 from pco.storage.db import SchemaError, connect
@@ -126,55 +126,35 @@ def _print_report(report: ImportReport, username: str | None) -> None:
         print(f"  ... and {report.rejected - len(report.errors)} more rejected")
 
 
-# Lichess `since` filters on game creation, so games still running during the previous
-# import started before it; a margin re-fetches them (duplicates are free). Correspondence
-# games longer than the margin need --full.
-_LICHESS_SINCE_MARGIN_MS = 24 * 3600 * 1000
-
-
-def _lichess_since_ms(last_run: str | None) -> int | None:
-    if not last_run:
-        return None
-    t = datetime.strptime(last_run, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-    return int(t.timestamp() * 1000) - _LICHESS_SINCE_MARGIN_MS
-
-
 def cmd_import(settings: Settings, args: argparse.Namespace, http: Http) -> int:
+    from pco.importers.accounts import import_account
+
     conn = connect(settings.db_path)
     try:
         if args.source == "pgn":
-            records = pgn_records(Path(args.file))
-            locator, username = str(Path(args.file).resolve()), args.username
+            report = import_records(
+                conn,
+                "pgn",
+                str(Path(args.file).resolve()),
+                pgn_records(Path(args.file)),
+                username=args.username,
+                player=args.player,
+            )
+            username = args.username
         else:
-            platform = args.source
-            username, locator = args.username, args.username.lower()
-            # Fail fast on an ownership conflict; the account itself is linked by the
-            # pipeline only once games actually arrive (no dangling accounts on errors).
-            owner = repo.account_owner(conn, platform, username)
-            if args.player and owner and owner != args.player:
-                raise repo.AccountConflict(f"{platform} account {username!r} belongs to {owner!r}")
-            last = None if args.full else repo.last_successful_run(conn, platform, locator)
-            if platform == "lichess":
-                records = lichess_records(
-                    http,
-                    username,
-                    since_ms=_lichess_since_ms(last),
-                    max_games=args.max,
-                    token=settings.lichess_token,
-                )
-            else:  # chess.com archives are monthly: re-read the month of the last import
-                records = chesscom_records(http, username, since_month=last and last[:7])
+            username = args.username
+            report, last = import_account(
+                conn,
+                http,
+                settings,
+                args.source,
+                username,
+                player=args.player,
+                full=args.full,
+                max_games=getattr(args, "max", None),
+            )
             if last:
                 print(f"incremental: new games since last import ({last}); --full refetches all")
-        report = import_records(
-            conn,
-            args.source,
-            locator,
-            records,
-            username=username,
-            player=args.player,
-            complete=getattr(args, "max", None) is None,
-        )
         _print_report(report, username)
         return 0
     except (SourceError, repo.AccountConflict) as exc:
@@ -213,59 +193,55 @@ def cmd_games(settings: Settings, verify: bool = False) -> int:
 
 
 def cmd_play(settings: Settings, args: argparse.Namespace) -> int:
+    """The interface: play your Twin, bring in games, rebuild, look back (docs/DESIGN.md)."""
     import webbrowser
 
-    from pco.play.opponent import DEFAULT_PLAY_TEMPERATURE, PriorOpponent
+    from pco.analysis.stockfish import StockfishEvaluator
+    from pco.decisions.cache import AnalysisCache
+    from pco.play.library import Library, LibraryError, real_trainer
     from pco.play.server import PlayApp, make_server
     from pco.priors.maia3 import Maia3Prior
 
     prior = Maia3Prior(
         ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.live_threads
     )
-    rng = random.Random(args.seed)
-    cleanup = []
-    if args.player:
-        from pco.analysis.stockfish import StockfishEvaluator
-        from pco.decisions.cache import AnalysisCache
-        from pco.personal.opponent import PersonalOpponent
-        from pco.personal.profile import PersonalProfile
+    evaluator = StockfishEvaluator(stockfish_binary(settings))
+    # Live play must not stall on another pco process holding the cache: best-effort writes
+    cache = AnalysisCache(settings.analysis_cache_path, busy_timeout=0.1, best_effort=True)
 
-        try:
-            profile = PersonalProfile.latest(settings.profiles_dir, args.player)
-        except (FileNotFoundError, ValueError) as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
-        evaluator = StockfishEvaluator(stockfish_binary(settings))
-        cache = AnalysisCache(settings.analysis_cache_path)
-        cleanup += [evaluator.close, cache.close]
+    def close() -> None:
+        evaluator.close()
+        cache.close()
 
-        def make(_elo: int, temp: float):
-            return PersonalOpponent(profile, prior, evaluator, cache, temperature=temp, rng=rng)
-
-        elo, temperature = profile.elo, profile.play_temperature
-        what = f"personal model of {args.player} (profile {profile.created_at})"
-    else:
-
-        def make(elo: int, temp: float):
-            return PriorOpponent(prior, elo, temperature=temp, rng=rng)
-
-        elo, temperature = args.elo, DEFAULT_PLAY_TEMPERATURE
-        what = f"generic {prior.model_id}, not personalized"
-    app = PlayApp(
-        make,
-        settings.played_dir,
-        elo=elo,
-        temperature=temperature if args.temperature is None else args.temperature,
-    )
+    library = Library(settings, UrllibHttp(), real_trainer(settings))
     try:
+        app = PlayApp(
+            library,
+            prior,
+            evaluator,
+            cache,
+            player=args.player,
+            rng=random.Random(args.seed),
+            temperature=args.temperature,
+        )
         server = make_server(app, args.port)
+    except LibraryError as exc:
+        print(f"error: {exc} (see `pco games`)", file=sys.stderr)
+        close()
+        return 1
     except OSError as exc:
         print(f"error: cannot listen on 127.0.0.1:{args.port}: {exc}", file=sys.stderr)
-        for close in cleanup:
-            close()
+        close()
         return 1
     url = f"http://127.0.0.1:{server.server_address[1]}/"
-    print(f"pco play: {url}  (opponent: {what})")
+    who = app.twin.player
+    if who is None:
+        what = "no games yet: the page will ask for them"
+    elif app.twin.has_twin:
+        what = f"{who}, Twin built {app.twin.profile.created_at}"
+    else:
+        what = f"{who}, no Twin yet: the page can build one"
+    print(f"pco play: {url}  ({what})")
     print("Ctrl-C to stop.", flush=True)
     if not args.no_browser:
         webbrowser.open(url)
@@ -275,9 +251,8 @@ def cmd_play(settings: Settings, args: argparse.Namespace) -> int:
         pass
     finally:
         server.server_close()
-        app.inference.shutdown()
-        for close in cleanup:
-            close()
+        app.close()
+        close()
     return 0
 
 
@@ -420,12 +395,7 @@ def cmd_quickstart(settings: Settings, args: argparse.Namespace, http: Http) -> 
     print(f"[4/4] ready: play against yourself with\n    uv run pco play --player {player}")
     if args.play:
         play_args = argparse.Namespace(
-            player=player,
-            port=8765,
-            elo=1500,
-            temperature=None,
-            seed=None,
-            no_browser=args.no_browser,
+            player=player, port=8765, temperature=None, seed=None, no_browser=args.no_browser
         )
         return cmd_play(settings, play_args)
     return 0
@@ -570,19 +540,18 @@ def main(argv: list[str] | None = None, http: Http | None = None) -> int:
     games = sub.add_parser("games", help="summarize imported games per player")
     games.add_argument("--verify", action="store_true", help="replay every stored game")
 
-    play = sub.add_parser("play", help="play against the opponent in your browser (local)")
+    play = sub.add_parser("play", help="play your Twin in your browser (local)")
     play.add_argument("--port", type=int, default=8765, help="localhost port (0 = any free)")
-    play.add_argument("--elo", type=int, default=1500, help="opponent rating for the prior")
     play.add_argument(
         "--temperature",
         type=float,
         default=None,
         help="sampling temperature: 1 = model distribution as is, 0 = argmax (default: the "
-        "profile's fitted value with --player, else 0.7, EXPERIMENTS E2.3/E4)",
+        "Twin's fitted value, EXPERIMENTS E4)",
     )
     play.add_argument("--seed", type=int, help="random seed for reproducible sampling")
     play.add_argument("--no-browser", action="store_true", help="do not open a browser")
-    play.add_argument("--player", help="play your personal model (see `pco train`)")
+    play.add_argument("--player", help="whose Twin (default: the one built most recently)")
     qs = sub.add_parser("quickstart", help="one command: import your games, train, play")
     qs.add_argument("--chesscom", help="your Chess.com username")
     qs.add_argument("--lichess", help="your Lichess username")

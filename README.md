@@ -85,21 +85,36 @@ and their exact numbers are in `AI_CONTEXTS/EXPERIMENTS.md`.
 
 ## The interface
 
-`pco play` opens a single, quiet screen ("Mirror"; full spec in `docs/DESIGN.md`).
-- **The board:** drag or click to move, or press `/` and type a move (`Nf3`,
-  `exd5`, `O-O`).
-- **The panel:** shows what the model just decided, the probability it gave its
-  top candidates, and the move it actually played. Hover a candidate to see it
-  drawn on the board.
-- **Pacing:** the opponent replies after a pause that grows with its uncertainty.
-- **Shortcuts:** `N` new game, `F` flip board, `?` all shortcuts.
-- **Theme:** light and dark follow your system.
+`pco play` opens the app in your browser (full spec in `docs/DESIGN.md`). It picks
+the player whose Twin was built most recently. With no games yet, it asks for them:
+**Show me your chess** (Chess.com, Lichess or a PGN file), then builds your Twin,
+showing each stage as it goes.
+
+- **Play:** "What do you want to do with yourself?" → choose which version of
+  yourself to meet: Current You, Older You, or Bullet/Blitz/Rapid You. The board
+  is the whole screen. Drag, click, or press `/` and type a move (`Nf3`, `O-O`).
+- **Whispers:** at most three short remarks per game, each with its evidence: "New
+  territory." when you leave positions you have played before, "That was unusual."
+  when your move is rare for you.
+- **The reflection:** after the game, how much it was "you" (compared with your
+  real games), where you and your Twin parted ways (both moves drawn on the board,
+  with how often you played each one there), and a replay.
+- **Archive:** each year with enough games, playable as that version of you.
+- **Twin:** a portrait in observations ("You often delay castling."). Only
+  differences with very clear statistical evidence are shown.
+- **Settings:** sources and new games, rebuilding, analysis depth, parallel
+  analyses, whispers and sound, data sizes, and forgetting (your Twin, or
+  everything).
+
+Versions other than Current You keep your current learned style and change the
+openings (that period's own games) and the rating (that period's median). The page
+says so in small print.
 
 ## What it is not
 
 - **Not a copy of your mind.** It is a statistical imitation of your observable
-  move choices. The *player-likeness* score shown after each move is a model
-  estimate, not a claim about intent.
+  move choices. Whispers, match shares and observations are model estimates,
+  not claims about intent.
 - **Not a strength engine.** It deliberately plays like you, including your mistakes.
 - **No clocks during play.** Your time-pressure habits are learned from your
   games, but untimed play never triggers them.
@@ -110,7 +125,8 @@ and their exact numbers are in `AI_CONTEXTS/EXPERIMENTS.md`.
 Everything stays on your machine, under `$PCO_HOME` (default `~/.local/share/pco`):
 your games, the analysis cache (safe to delete), and your trained profiles. The
 network is used only to download your public games and the model and engine
-files. The play page is served on `127.0.0.1` only.
+files. The app is served on `127.0.0.1` only. Settings → Data shows what is
+stored and can forget your Twin or everything (downloaded models stay).
 
 ## All commands
 
@@ -121,7 +137,7 @@ files. The play page is served on `127.0.0.1` only.
 | `pco import chesscom U` / `lichess U` / `pgn FILE --username U` | import games; repeatable, only new games are added |
 | `pco games [--verify]` | summary, plus a replay check of every stored game |
 | `pco train NAME [--speed S] [--recent N \| --all]` | train or update your personal opponent |
-| `pco play [--player NAME] [--temperature T]` | play in the browser; without `--player`, a generic Maia opponent |
+| `pco play [--player NAME] [--temperature T]` | the app: play your Twin, import, rebuild, look back |
 | `pco eval NAME` | held-out evaluation report vs baselines |
 | `pco build NAME [--export f.jsonl]` | analyzed decision dataset, for research |
 

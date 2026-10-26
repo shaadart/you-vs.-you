@@ -518,3 +518,68 @@ independent player.
   3. An outlier sampled move (p < 0.005) displayed as "p 0.00" and was missing
      from the spectrum.
   The suspected square-color inversion was ruled out by sampling pixels.
+
+## 2026-10-26: UX iteration "Twin" (owner request: the experience of playing yourself)
+
+- Spec: `docs/DESIGN.md` now has two layers. **Mirror** (visual identity: tokens,
+  fonts, board) is unchanged and is the source of truth. **Twin** is the experience
+  built on it: I → my games → my Twin → the game → the reflection, with PLAY ·
+  ARCHIVE · TWIN · SETTINGS. The opponent is always "you" / "your Twin".
+- New modules:
+  - `play/twin.py` (TwinService): versions, observations, whispers, reflection.
+  - `play/library.py` (Library): players, games, Twins, preferences, imports,
+    builds, forgetting.
+  - `play/jobs.py` (JobRunner): one background job, stage + machine fragments.
+  - `importers/accounts.py` (`import_account`): shared by the CLI and the app.
+- Changed:
+  - `play/server.py` rewritten around the Twin. Routes: `/api/home`, `versions`,
+    `twin`, `archive`, `settings` (GET/POST), `job`, `reflection`, `import`,
+    `build`, `forget` (typed confirmation), `player`, plus the game routes.
+    Unexpected errors return JSON 500 instead of dropping the connection.
+  - `pco play` opens the app (picks the player with the newest Twin; onboarding
+    when there are no games). `--elo` and the generic-prior opponent left the
+    interface.
+  - `train_profile(report=...)` reports the build stages. `DecisionBuilder.analyze`
+    accepts a progress callback. `import_records(progress=...)`.
+  - Profiles record `weight_cov` (D40). `PersonalOpponent.analyze()` returns the
+    distribution plus its engine analysis (D41).
+  - `AnalysisCache(busy_timeout, best_effort)` and `clear()` (D43).
+  - `pgn_text_records` for uploaded PGN text.
+  - The page is rewritten as a single page with hash routes, keeping every Mirror
+    token.
+- Verified:
+  - `uv run pytest -q`: 144 passed (new: `tests/test_twin.py`, the onboarding →
+    import → build → play → reflection → forget flow over HTTP, a visible-copy
+    test). ruff is clean. `node tests/js/ui_check.js` covers the routing, the
+    ritual, optimistic moves, whispers, the reflection copy, the difference and
+    replay boards, and build stages.
+  - Real run on the owner's home: the Twin was rebuilt through `/api/build` with
+    every stage reported, fully cached, in 114 s. A new profile (with
+    `weight_cov`) was saved; older profiles are kept. Live analysis of a human move
+    and the Twin's reply each took about 0.13–0.15 s at Lite (4 moves; informal).
+  - Headless-Firefox screenshots of every screen at 1440×900 (light) and 500×758
+    (dark; Firefox's minimum headless width).
+- Bugs caught by the real run and screenshots:
+  1. Time-control versions pooled every year (a 2021-heavy "Bullet You"). They now
+     use the past 365 days.
+  2. The machine voice uppercased SAN ("1.D4"). Notation now keeps its case.
+  3. The portrait printed `[object Object]` (a list where a count was expected), and
+     its machine fragments inherited the 24px serif.
+  4. "You have made this kind of move 40,023 times" was true but meaningless. The
+     difference view now counts your moves in that exact position, and otherwise
+     uses a finer kind (piece, character, phase, destination).
+  5. Whispers fired one move apart. All kinds are now spaced ≥ 8 plies, and
+     "unusual" means < 5% of the top choice (it was 8%).
+  6. The reflection could say "It knew you well." above "That wasn't quite you."
+     The loss line now follows the match.
+  7. **"database is locked":** an older `pco play` process (pre-change code, which
+     commits only on exit) held the analysis cache's write lock. The new server's
+     move failed with an uncaught error. Fixed by D43 and the JSON 500 handler.
+  8. With a short busy timeout, a *locked* cache could have been mistaken for a
+     corrupt one and moved aside. It is now re-raised instead.
+- Not done, recorded:
+  - The spec's "N similar decisions found → Compare them" step is realized as
+    position-level counts in "See the difference", not as a search over similar
+    past positions.
+  - There are no clocks, so "time" in game is elapsed time.
+  - Versions are approximations (D39).

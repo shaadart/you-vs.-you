@@ -4,11 +4,17 @@ import http.client
 import json
 import math
 import random
+import re
 import threading
+import time
+from pathlib import Path
 
 import chess
 import pytest
+from fakes import FakeEvaluator, FakePrior
+from homes import make_library, synthetic_pgn_text
 
+from pco.decisions.cache import AnalysisCache
 from pco.importers.normalize import NormalizationError, normalize_pgn
 from pco.play.opponent import MoveChoice, OpponentError, PriorOpponent
 from pco.play.server import PlayApp, make_server
@@ -153,23 +159,24 @@ def test_opponent_label_never_claims_personalization():
 # ------------------------------------------------------------------ server
 
 
-@pytest.fixture
-def server(tmp_path):
-    app = PlayApp(
-        lambda elo, t: PriorOpponent(UniformPrior(), elo, temperature=t, rng=random.Random(3)),
-        tmp_path / "played",
-    )
+@pytest.fixture(scope="module")
+def server(tmp_path_factory):
+    """The app over a fresh home: no games, no Twin (the onboarding state)."""
+    library = make_library(tmp_path_factory.mktemp("home"))
+    cache = AnalysisCache(library.settings.analysis_cache_path)
+    app = PlayApp(library, FakePrior(), FakeEvaluator(), cache, rng=random.Random(3))
     srv = make_server(app, port=0)
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
     thread.start()
-    yield srv, app, tmp_path
+    yield srv, app, library.settings.home
     srv.shutdown()
     srv.server_close()
+    app.close()
 
 
 def call(srv, method, path, body=None, headers=None):
     port = srv.server_address[1]
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
     hdrs = {"Host": f"127.0.0.1:{port}"}
     if body is not None:
         hdrs["Content-Type"] = "application/json"
@@ -182,6 +189,15 @@ def call(srv, method, path, body=None, headers=None):
     return resp.status, json.loads(data) if ctype.startswith("application/json") else data
 
 
+def wait_job(srv):
+    for _ in range(600):
+        _, body = call(srv, "GET", "/api/job")
+        if body["job"]["status"] != "running":
+            return body["job"]
+        time.sleep(0.05)
+    raise AssertionError("job did not finish")
+
+
 def test_server_serves_offline_page(server):
     srv, _, _ = server
     status, page = call(srv, "GET", "/")
@@ -191,37 +207,75 @@ def test_server_serves_offline_page(server):
     )  # no CDN/remote assets
 
 
-def test_server_full_game_over_http_saves_marked_pgn(server):
-    srv, app, tmp_path = server
-    status, state = call(srv, "POST", "/api/new", {"color": "black", "elo": 1200})
-    assert status == 200 and state["opponent_to_move"] and state["opponent"]["elo"] == 1200
+def test_onboarding_import_build_play_reflect_forget(server):
+    """The whole story over HTTP: no games -> PGN -> Twin -> a game -> reflection."""
+    srv, app, home = server
+    status, h = call(srv, "GET", "/api/home")
+    assert status == 200 and h["player"] is None and not h["has_twin"] and h["games"] == 0
+    status, body = call(srv, "POST", "/api/new", {"version": "current"})
+    assert status == 409 and "no Twin" in body["error"]
+
+    status, body = call(srv, "POST", "/api/import", {"source": "pgn", "pgn": synthetic_pgn_text()})
+    assert status == 200 and body["job"]["status"] == "running"
+    status, busy = call(srv, "POST", "/api/import", {"source": "accounts"})
+    assert status == 409 and "already working" in busy["error"]
+    job = wait_job(srv)
+    assert job["status"] == "done", job
+    assert job["result"]["found"] == 60 and job["result"]["player"] == "Me"
+    assert job["stages"][0] == "FINDING YOUR GAMES" and job["stages"][-1] == "READY"
+    _, h = call(srv, "GET", "/api/home")
+    assert h["player"] == "Me" and h["has_twin"] and h["games"] == 60
+    assert h["years"] == ["2025", "2026"] and h["built_games"] == 60 and h["new_games"] == 0
+
+    status, state = call(srv, "POST", "/api/new", {"version": "current", "color": "black"})
+    assert status == 200 and state["version"]["label"] == "Current You"
+    assert state["opponent_to_move"] and "engine" not in json.dumps(state["version"]).lower()
     rng = random.Random(5)
-    for _ in range(1000):
-        if state["over"]:
-            break
+    for _ in range(6):
         if state["opponent_to_move"]:
             status, state = call(srv, "POST", "/api/opponent", {})
-            assert status == 200 and state["last_choice"]["source"] == "test-uniform"
-        else:
-            status, state = call(
-                srv, "POST", "/api/move", {"uci": rng.choice(state["legal_moves"])}
-            )
-            assert status == 200
-    assert state["over"] and state["saved_pgn"]
-    saved = list((tmp_path / "played").glob("*.pgn"))
-    assert len(saved) == 1 and GENERATED_TAG in saved[0].read_text()
-    status, pgn = call(srv, "GET", "/api/pgn")
-    assert status == 200 and GENERATED_TAG.encode() in pgn
+            assert status == 200 and state["last_choice"]["san"]
+        status, state = call(srv, "POST", "/api/move", {"uci": rng.choice(state["legal_moves"])})
+        assert status == 200 and "whisper" in state
+    status, body = call(srv, "GET", "/api/reflection")
+    assert status == 409 and "not over" in body["error"]
+    call(srv, "POST", "/api/resign", {})
+    status, r = call(srv, "GET", "/api/reflection")
+    assert status == 200 and r["outcome"] == "resigned" and r["version"]["id"] == "current"
+    assert list((home / "played").glob("*.pgn"))
+
+    status, portrait = call(srv, "GET", "/api/twin")
+    assert status == 200 and portrait["games"] == 60 and portrait["model"]["has_covariance"]
+    status, archive = call(srv, "GET", "/api/archive")
+    assert [y["year"] for y in archive["years"]] == ["2026", "2025"]
+    assert archive["years"][0]["version"] == "current" and archive["years"][0]["now"]
+
+    status, settings = call(srv, "GET", "/api/settings")
+    assert status == 200 and settings["prefs"]["speed"] == "lite" and settings["twin"]["built"]
+    status, _ = call(srv, "POST", "/api/settings", {"speed": "warp"})
+    assert status == 409
+    status, body = call(srv, "POST", "/api/settings", {"speed": "standard"})
+    assert status == 200 and body["prefs"]["speed"] == "standard"
+
+    status, body = call(srv, "POST", "/api/forget", {"what": "twin", "confirm": "yes"})
+    assert status == 409 and "FORGET" in body["error"]
+    status, h = call(srv, "POST", "/api/forget", {"what": "twin", "confirm": "FORGET"})
+    assert status == 200 and h["player"] == "Me" and not h["has_twin"] and h["games"] == 60
+    status, h = call(srv, "POST", "/api/forget", {"what": "everything", "confirm": "FORGET"})
+    assert status == 200 and h["player"] is None and h["games"] == 0
+    assert not (home / "pco.sqlite3").exists() and not (home / "played").exists()
 
 
 def test_server_rejects_illegal_and_malformed_requests(server):
     srv, _, _ = server
     status, body = call(srv, "POST", "/api/move", {"uci": "e2e5"})
-    assert status == 409 and "illegal" in body["error"] and body["state"]["fen"]
+    assert status == 409 and body["error"]
     status, _ = call(srv, "POST", "/api/new", {"color": "purple"})
     assert status == 409
-    status, _ = call(srv, "POST", "/api/new", {"elo": "high"})
+    status, _ = call(srv, "POST", "/api/new", {"temperature": "high"})
     assert status == 409
+    status, _ = call(srv, "POST", "/api/import", {"source": "myspace"})
+    assert status == 200 and wait_job(srv)["status"] == "failed"
     status, _ = call(srv, "POST", "/api/nope", {})
     assert status == 404
 
@@ -232,15 +286,6 @@ def test_server_blocks_foreign_host_and_non_json_posts(server):
     assert status == 403
     status, _ = call(srv, "POST", "/api/resign", headers={"Content-Type": "text/plain"}, body=None)
     assert status == 415
-
-
-def test_server_reports_opponent_failure_without_moving(tmp_path):
-    app = PlayApp(lambda elo, t: PriorOpponent(FailingPrior(), elo), tmp_path)
-    app.new_game("black", 1500, 1.0)
-    app.opponent_move()
-    state = app.state()
-    assert "model exploded" in state["error"] and state["opponent_to_move"]
-    assert state["san_moves"] == []
 
 
 # ------------------------------------------------------------------ real prior
@@ -280,16 +325,6 @@ def test_server_serves_only_bundled_fonts(server):
         assert call(srv, "GET", path)[0] == 404, path
 
 
-def test_state_carries_san_for_typed_moves_and_structured_opponent(server):
-    srv, _, _ = server
-    _, state = call(srv, "GET", "/api/state")
-    assert {"uci": "g1f3", "san": "Nf3"} in state["legal"]
-    assert len(state["legal"]) == len(state["legal_moves"]) == 20
-    opp = state["opponent"]
-    assert opp["personal"] is False and opp["name"] is None and opp["model"] == "test-uniform"
-    assert opp["default_temperature"] == opp["temperature"]
-
-
 def test_page_uses_no_remote_resources(server):
     srv, _, _ = server
     _, page = call(srv, "GET", "/")
@@ -297,3 +332,12 @@ def test_page_uses_no_remote_resources(server):
     assert "/static/fonts/" in text
     for remote in ("https://", "fonts.googleapis", "cdn."):
         assert remote not in text
+
+
+def test_page_never_calls_the_twin_a_machine():
+    """Visible words (markup text, outside scripts and styles) say "you", not AI/bot/engine."""
+    page = (Path(__file__).parent.parent / "src/pco/play/static/index.html").read_text()
+    visible = re.sub(r"<(script|style)>.*?</\1>", "", page, flags=re.S)
+    visible = re.sub(r"<[^>]+>", " ", visible)
+    assert "What do you want to do with yourself?" in visible and "SHOW ME YOUR CHESS." in visible
+    assert not re.search(r"\b(ai|bot|engine|computer)\b", visible, flags=re.I)

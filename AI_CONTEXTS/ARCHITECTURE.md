@@ -36,12 +36,18 @@ src/pco/
   importers/sources.py  [impl] adapters -> RawRecord(kind, text): pgn file split, Lichess NDJSON, chess.com archives
   importers/normalize.py [impl] RawRecord -> NormalizedGame (one PGN path for all sources)
   importers/pipeline.py  [impl] import_records(): raw store -> normalize -> dedup insert -> account linking
+  importers/accounts.py  [impl] import_account(): incremental Chess.com/Lichess import shared by CLI and interface
   importers/http.py   [impl] stdlib HTTP client: User-Agent, 429/5xx retry, injectable
   play/opponent.py    [impl] Opponent protocol, MoveChoice, PriorOpponent (samples the prior; no fallback)
   play/session.py     [impl] GameSession: turns, legality, termination, resignation, generated-PGN export
-  play/server.py      [impl] PlayApp + stdlib ThreadingHTTPServer on 127.0.0.1 (JSON API)
-  play/static/index.html [impl] "Mirror" UI (docs/DESIGN.md): inline cburnett piece symbols, drag/click/typed moves,
-                             on-board promotion, spectrum + ghost arrows, uncertainty pacing, dialog, shortcuts
+  play/server.py      [impl] PlayApp (one game + the Twin + jobs) + stdlib ThreadingHTTPServer on 127.0.0.1 (JSON API)
+  play/twin.py        [impl] TwinService: versions (year/time-control books + median ratings), observations (z-gated
+                             weight contrasts), whispers, post-game reflection (per-decision Twin view + divergences)
+  play/library.py     [impl] Library: the interface's view of $PCO_HOME (players, games, Twins, preferences, imports
+                             via import_account/import_records, builds via train_profile, forgetting)
+  play/jobs.py        [impl] JobRunner: one background job at a time, (stage, machine fragment) reports
+  play/static/index.html [impl] single page, "Mirror" identity + "Twin" experience (docs/DESIGN.md): hash routes for
+                             home/meet/game/reflection/review/twin/archive/settings/import/build
   play/static/fonts/  [impl] bundled Newsreader + IBM Plex Mono woff2 (OFL), served by a whitelisted /static route
   decisions/episodes.py [impl] DecisionEpisode (observed, pre-move only) + player_episodes() chronological
   decisions/cache.py  [impl] AnalysisCache: separate SQLite file under cache_dir (prior + engine results)
@@ -393,12 +399,43 @@ limit, never required). Planned: a hardware profile (It. 7).
   - The opponent's reply is paced by 250 ms + 750 ms × (1 − p). This is
     presentation only; the model's latency is still reported.
 
+- **D38 The interface is the product; the opponent is "you".** `pco play` serves
+  one app (home, versions, game, reflection, archive, Twin, settings, import,
+  build) over a `Library` bound to `$PCO_HOME`. The generic-prior opponent left
+  the interface (`PriorOpponent` stays for tests and scripts). Visible copy never
+  says AI/bot/engine/computer (tested).
+- **D39 Versions are approximations, stated as such.** A version = that slice's
+  own opening book (first 40 plies) + its median rating, combined with the current
+  residual weights. Years need ≥ 150 games. Time-control versions use the past 365
+  days. No per-version training: it would multiply build time, and small slices
+  fit noise.
+- **D40 Observations require clear evidence.** Profiles record
+  `weight_cov` = pinv(Hessian of the mean objective) / Kish n_eff. A sentence is
+  shown only for |z| ≥ 4, and the one-hot piece weights are read as contrasts
+  against the mean piece. Older profiles without a covariance show opening facts
+  only. Covariances are optimistic (moves within a game correlate), hence the
+  high threshold.
+- **D41 Whispers and reflections reuse live analysis.** Each human move is
+  analyzed once by the version's own model (`PersonalOpponent.analyze`, the same
+  path as play). That analysis feeds the whisper and is cached per ply for the
+  reflection, so the post-game view costs only the extra engine scores of
+  out-of-set moves. "Very you" compares the game's top-3 share with the
+  profile's own validation top-3.
+- **D42 One job at a time, in-process.** Imports and builds run in a daemon
+  thread and report (stage, machine fragment); the page polls `/api/job`. Builds
+  share the live `AnalysisCache` instance (thread-safe through its lock) and load
+  their own Maia at `PCO_TORCH_THREADS`, then reset torch to `PCO_LIVE_THREADS`.
+- **D43 Live play never blocks on the cache.** The app opens the analysis cache
+  with a 0.1 s busy timeout and best-effort writes, and commits after every move.
+  Another pco process holding the write lock costs only uncached results, never a
+  stalled or failed move. A locked cache is never treated as corrupt.
+
 ## Known limitations
 
 - Play: one game at a time per server, no takeback, no clocks or time control.
-  The opponent Elo is chosen by the user, not derived from their games. Pieces are
-  Unicode glyphs, which depend on system fonts (DejaVu, Segoe UI Symbol and Noto
-  are listed as fallbacks).
+  Versions other than Current You are approximations (D39). Forgetting deletes
+  files under `$PCO_HOME` but cannot recall games already in the platforms'
+  public archives.
 
 - Maia-3's encoder uses a perspective-mirrored board history. For a FEN without a
   move stack, history is padded with the current position, which is measurably

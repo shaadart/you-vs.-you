@@ -192,9 +192,13 @@ class DecisionBuilder:
         return list(zip(part, boards, dists, strict=True))
 
     def analyze(
-        self, episodes: Sequence[DecisionEpisode], progress: bool = False
+        self,
+        episodes: Sequence[DecisionEpisode],
+        progress: bool | Callable[[int, int, float], None] = False,
     ) -> list[EpisodeAnalysis]:
-        """Pipelined: while the engine pool scores chunk n, the prior runs on chunk n+1."""
+        """Pipelined: while the engine pool scores chunk n, the prior runs on chunk n+1.
+
+        `progress`: True prints to stderr; a callable receives (done, total, rate/s)."""
         results: list[EpisodeAnalysis] = []
         n_workers = len(self.evaluators)
         chunks = [episodes[i : i + self.chunk] for i in range(0, len(episodes), self.chunk)]
@@ -215,7 +219,10 @@ class DecisionBuilder:
                 )
                 self.cache.commit()
                 items = next_items
-                if progress:
+                if callable(progress):
+                    done = len(results)
+                    progress(done, len(episodes), done / max(1e-9, time.perf_counter() - t0))
+                elif progress:
                     done = len(results)
                     rate = done / (time.perf_counter() - t0)
                     eta = (len(episodes) - done) / rate if rate else 0

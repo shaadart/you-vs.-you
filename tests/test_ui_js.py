@@ -11,7 +11,7 @@ PAGE = ROOT / "src" / "pco" / "play" / "static" / "index.html"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-def test_page_click_to_move_and_promotion():
+def test_page_flows_against_a_fake_server():
     out = subprocess.run(
         ["node", str(ROOT / "tests" / "js" / "ui_check.js"), str(PAGE)],
         capture_output=True,
