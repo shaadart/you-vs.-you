@@ -44,7 +44,6 @@ There is no pending roadmap iteration. Candidates, all measurement-first (ROADMA
 
 ## Owner decisions pending
 
-- **The project license** (AGPL-compatible if distributed with Maia-3; PROJECT.md).
 - The "Twin" UX iteration is uncommitted in git (the owner commits when ready).
 
 ## Watch out for

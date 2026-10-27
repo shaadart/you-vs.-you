@@ -2,6 +2,8 @@
 name = "pco"
 version = "0.0.1"
 description = "Personal Chess Opponent: a local-first chess opponent that learns how you play."
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [

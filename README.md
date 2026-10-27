@@ -193,13 +193,13 @@ experiments and the handoff live in [`AI_CONTEXTS/`](AI_CONTEXTS/); start with
 <details>
 <summary><b>Credits and licenses</b></summary>
 
-- [Maia-3](https://github.com/CSSLab/maia3) by CSSLab (AGPL-3.0), and
-  [Stockfish](https://stockfishchess.org) (GPL-3.0), run as a separate program.
+- pco itself: GNU Affero General Public License v3.0 (AGPL-3.0-only). Because
+  pco imports [Maia-3](https://github.com/CSSLab/maia3), it is a derivative work
+  and must be distributed under an AGPL-compatible license.
+- Maia-3 by CSSLab (AGPL-3.0).
+- [Stockfish](https://stockfishchess.org) (GPL-3.0), run as a separate program.
 - Chess pieces by Colin M.L. Burnett (GPLv2+, via lichess).
 - Fonts: Newsreader, IBM Plex Mono and Geist Pixel (all SIL OFL 1.1; licenses in
   `src/pco/play/static/fonts/`).
-
-Anyone distributing pco must keep it AGPL-compatible. pco's own license hasn't
-been chosen yet.
 
 </details>
