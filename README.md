@@ -1,4 +1,5 @@
 # You vs. You
+It has always been you vs. *you*, twin!
 
 ### Play chess against yourself.
 
