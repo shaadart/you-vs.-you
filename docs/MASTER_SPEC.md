@@ -1,4 +1,4 @@
-# Personal Chess Opponent — Master Implementation Specification
+# You vs. You — Master Implementation Specification
 
 > Preserved verbatim from the initial project prompt (received 2026-10-23).
 > This file is the source of truth for intended product behavior. Do not edit
@@ -9,7 +9,7 @@
 
 ## 1. Your Role and Mission
 
-You are the principal software engineer, ML engineer, and technical architect responsible for building **Personal Chess Opponent**.
+You are the principal software engineer, ML engineer, and technical architect responsible for building **You vs. You**.
 
 Your task is to translate the provided engineering and research specification into a working, local-first application through carefully planned, manageable development iterations.
 

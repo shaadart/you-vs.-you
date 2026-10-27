@@ -1,8 +1,8 @@
 # CLAUDE.md
 
-Personal Chess Opponent (`pco`): a local-first, CPU-only chess opponent that learns
-one player's move distribution. It combines the Maia-3 prior, learned
-personalization, and Stockfish as an evaluator.
+You vs. You (`pco`): a local-first, CPU-only chess opponent that learns one
+player's move distribution. It combines the Maia-3 prior, learned personalization,
+and Stockfish as an evaluator.
 
 - **Start every session with `AI_CONTEXTS/HANDOFF.md`**, then ROADMAP.md and
   ARCHITECTURE.md. The spec is `docs/MASTER_SPEC.md`.

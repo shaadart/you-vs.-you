@@ -35,6 +35,7 @@ global.document = {
   getElementById: id => (byId[id] ||= new FakeEl("div")),
   createElement: t => new FakeEl(t), createElementNS: (_, t) => new FakeEl(t),
   querySelector: () => null, querySelectorAll: () => [], addEventListener() {},
+  documentElement: new FakeEl("html"),
 };
 global.window = global;
 const winListeners = {};
@@ -80,6 +81,11 @@ let glimpseMode = "yours";
 const RUNNING = { id: 3, kind: "build", stage: "REMEMBERING", stages: ["REMEMBERING"], status: "running", error: null,
   result: {}, plan: { REMEMBERING: 1500, "FINDING PATTERNS": 300 }, meta: { first: true, basis: "this machine" },
   durations: {}, fraction: 0.4, fragments: ["DECISION 26,404 OF 66,011 · 52/S"], eta: 1560, eta_basis: "live", seconds: 192 };
+const YEARS = [  // newest first, as the server sends them
+  { year: "2026", games: 2158, rating: 1125, signature: { move: "1.d4", share: 0.66 }, tempos: ["blitz"], version: "current", now: true },
+  { year: "2022", games: 121, rating: 486, signature: null, tempos: ["bullet"], version: null, now: false },
+  { year: "2021", games: 838, rating: 592, signature: { move: "1.e3", share: 0.6 }, tempos: ["bullet"], version: "year-2021", now: false },
+];
 let server = { ...base }, home = { ...HOME }, job = null;
 const calls = [];
 const reply = (s, ok = true) => ({ ok, json: async () => s });
@@ -90,7 +96,7 @@ global.fetch = async (path, opts) => {
   if (path === "/api/versions") return reply({ versions: VERSIONS });
   if (path === "/api/reflection") return reply(REFLECTION);
   if (path === "/api/job") return reply({ job });
-  if (path === "/api/archive") return reply({ player: "me", years: [] });
+  if (path === "/api/archive") return reply({ player: "me", years: YEARS });
   if (path === "/api/settings" && !body) return reply({ player: "me", players: ["me"], prefs: { speed: "lite", workers: null, temperature: null },
     presets: { lite: { candidates: 3, nodes: 3000, rate: 70 } }, accounts: [{ platform: "chesscom", username: "me", last_import: null }],
     storage: { home: "/h", games_bytes: 1, analysis_bytes: 1, twin_bytes: 1, played_games: 0 }, cores: 12, default_workers: 4,
@@ -128,7 +134,51 @@ const FORBIDDEN = /\b(ai|bot|engine|computer)\b/i;
   await tick(); await tick();
   assert(!byId["s-home"].hidden && byId["s-game"].hidden, "home shown first");
   assert(byId["home-question"].textContent === "What do you want to do with yourself?", "the question");
-  assert(byId["home-summary"].textContent === "10,734 games · 6 years · built 24.10.26", "summary " + byId["home-summary"].textContent);
+  assert(byId["ticker-line"].textContent === "10,734 games · 6 years · built 24.10.26", "summary " + byId["ticker-line"].textContent);
+
+  // your years live on the home now: oldest first, each playable, too-small years quiet
+  const tiles = byId.years.children;
+  assert(tiles.map(t => t.attrs["aria-label"]).join() === "Play You · 2021,2022: too few games to meet,Play You · 2026", "years in order");
+  assert(tiles[1].disabled && !tiles[0].disabled && tiles[2].className.includes("now"), "playable vs not, and now");
+  assert(tiles[0].innerHTML.includes("1.e3") && tiles[0].innerHTML.includes("width:39%"), "opening + volume bar");
+  assert(!byId["home-years"].hidden, "years row shown");
+
+  // the summary line keeps telling you things, and holds still while you hover it
+  const facts = P.tickerFacts(HOME, YEARS);
+  assert(facts[0] === "10,734 games · 6 years · built 24.10.26" && facts.length >= 5, "facts " + facts);
+  assert(facts.includes("1.d4 in 66% of your games as White this year") && facts.includes("Most games in 2026: 2,158"), "real facts");
+  P.tickTo(facts[1]);
+  assert(byId["ticker-line"].textContent === facts[1], "ticks");
+  // it moves like something with weight: a spring that settles, with one small overshoot
+  const path = [];
+  await new Promise(done => P.spring(14, 0, { k: 80, c: 13 }, x => { path.push(x); return true; }, done));
+  const low = Math.min(...path);
+  assert(path[path.length - 1] === 0 && low < 0 && low > -1.5, "spring settles softly, lowest " + low);
+  assert(P.dwellFor("a longer line takes longer to read") > P.dwellFor("short") && P.dwellFor("short") >= 5000, "slow, reading-paced");
+  await byId["home-summary"].dispatch("mouseenter");
+  assert(P.ui.tickerHold === true, "hover holds");
+  await byId["home-summary"].dispatch("mouseleave");
+  assert(P.ui.tickerHold === false, "and lets go");
+
+  // theme and board, chosen in Settings, live on the page root
+  P.ui.theme = "dark"; P.ui.board = "walnut"; P.applyAppearance();
+  assert(document.documentElement.dataset.theme === "dark" && document.documentElement.dataset.board === "walnut", "appearance applied");
+  P.ui.theme = "system"; P.ui.board = "paper"; P.applyAppearance();
+  assert(!("theme" in document.documentElement.dataset) && !("board" in document.documentElement.dataset), "system + paper are the defaults");
+  // the pink and blue rooms apply at once, and bring their own board when you're still on Paper
+  P.chooseTheme("pink");
+  assert(document.documentElement.dataset.theme === "pink" && P.ui.board === "blush" && document.documentElement.dataset.board === "blush", "pink room + blush board");
+  P.ui.board = "moss"; P.chooseTheme("blue");
+  assert(document.documentElement.dataset.theme === "blue" && P.ui.board === "moss", "a board you chose is kept");
+  P.ui.board = "paper"; P.chooseTheme("blue");
+  assert(P.ui.board === "terminal", "blue room + terminal board");
+  P.ui.board = "paper"; P.chooseTheme("system");
+  assert(!("theme" in document.documentElement.dataset) && !("board" in document.documentElement.dataset), "back to system");
+
+  await tiles[0].click(); await tick(); await tick();
+  assert(P.ui.route === "meet" && P.ui.version === "year-2021", "a year goes straight to meeting that you");
+  P.ui.version = "current";
+  P.go(""); await tick(); await tick();
   assert(byId["home-play"].textContent === "Play yourself", "primary action");
 
   // show, don't tell: a real position you know; answer it, and see yourself and your Twin
@@ -157,7 +207,7 @@ const FORBIDDEN = /\b(ai|bot|engine|computer)\b/i;
   // the ritual: YOU -> YOU -> PLAY, with versions framed as yourself
   P.go("meet"); await tick(); await tick();
   const names = byId.versions.children.map(b => b.textContent);
-  assert(JSON.stringify(names) === JSON.stringify(["Current You", "Older You", "Blitz You", "Archive →"]), "versions " + names);
+  assert(JSON.stringify(names) === JSON.stringify(["Current You", "Older You", "Blitz You"]), "versions " + names);
   assert(byId["meet-basis"].innerHTML.startsWith("STYLE · OPENINGS · STRENGTH · 2026 · RATING 1135"), "basis line");
   await byId.versions.children[1].click();
   assert(P.ui.version === "year-2021", "older you = the oldest year");
@@ -250,7 +300,7 @@ const FORBIDDEN = /\b(ai|bot|engine|computer)\b/i;
     ...Object.values(P.differenceCopy(REFLECTION.divergences[0])),
     ...["new", "unusual", "familiar"].flatMap(k => Object.values(P.whisperCopy({ kind: k, position: "1", likeness: 0.1, seen: 3 }))),
     byId["glimpse-you"].textContent, byId["glimpse-twin"].textContent, byId["home-question"].textContent,
-    P.timeLeft(100), P.estimateLine({ seconds: 10, first: true }), P.estimateLine({ seconds: 10, rereads: true })];
+    P.timeLeft(100), P.estimateLine({ seconds: 10, first: true }), P.estimateLine({ seconds: 10, rereads: true }), ...facts];
   for (const text of copies) assert(!FORBIDDEN.test(String(text || "")), "forbidden word in: " + text);
 
   server = { ...base, over: { result: "1-0", reason: "checkmate" } }; await P.api("/api/state");
@@ -279,7 +329,7 @@ const FORBIDDEN = /\b(ai|bot|engine|computer)\b/i;
   assert(byId.stages.children.map(li => li.className).join() === "now,todo,todo,todo,todo", "how far along");
   assert(byId.stages.children[0].children[1].textContent === "DECISION 26,404 OF 66,011 · 52/S", "current stage detail");
   assert(!byId["build-leave"].hidden, "you may leave");
-  P.go("archive"); await tick(); await tick();
+  P.go(""); await tick(); await tick();
   assert(!byId["job-pill"].hidden && byId["job-pill-text"].innerHTML.includes("ABOUT 25 MIN"), "pill elsewhere: " + byId["job-pill-text"].innerHTML);
   P.renderJob({ ...RUNNING, kind: "import", stage: "COMPARING DECISIONS", stages: ["FINDING YOUR GAMES", "REMEMBERING", "FINDING PATTERNS", "COMPARING DECISIONS"],
     durations: { "FINDING YOUR GAMES": 75, REMEMBERING: 1490, "FINDING PATTERNS": 300 }, result: { found: 4862 }, meta: {} });

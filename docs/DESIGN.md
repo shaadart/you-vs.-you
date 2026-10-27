@@ -1,4 +1,4 @@
-# pco — Interface Design
+# You vs. You — Interface Design
 
 Two layers. **Mirror** is the visual identity: paper, two voices, the board. It is the
 source of truth and doesn't change. **Twin** is the experience built on it: you are
@@ -51,7 +51,9 @@ every OS and works offline.
 
 ## Color
 
-Light theme **Paper** and dark theme **Graphite**, chosen by `prefers-color-scheme`.
+Light theme **Paper** and dark theme **Graphite**. They follow `prefers-color-scheme`
+unless you choose one in Settings → Appearance (remembered on this device and applied
+before the first paint).
 Ratios are text contrast against `bg` (WCAG AA ≥ 4.5).
 
 | token | Paper | Graphite | use |
@@ -65,7 +67,57 @@ Ratios are text contrast against `bg` (WCAG AA ≥ 4.5).
 | `machine` | `#2747D9` (6.2) | `#93A6FF` (8.2) | machine voice, the Twin's mark and arrows, focus |
 | `human` | `#8A5A12` (5.2) | `#E3AE52` (9.4) | your mark, your arrows, selection, current nav |
 | `check` | `#B4331F` (5.4) | `#F07A64` (6.9) | check, destructive actions |
-| `sq-light` / `sq-dark` | `#E6E0D2` / `#B3A994` | `#8C8576` / `#5F594E` | board |
+| `sq-light` / `sq-dark` | `#E6E0D2` / `#B3A994` | `#8C8576` / `#5F594E` | board (Paper; see Boards) |
+
+## Rooms
+
+Besides Paper and Graphite there are two softer light rooms, chosen in Settings →
+Appearance. Their color is in the room and on its board. The two voices stay apart:
+amber is you, cobalt is the machine. Every text color is at least 5:1 on its
+background.
+
+| token | Pink | Blue |
+|---|---|---|
+| `bg` | `#F6EDF0` | `#ECF0F6` |
+| `surface` | `#FBF6F8` | `#F6F8FB` |
+| `ink` | `#221A1D` (14.8) | `#141821` (15.5) |
+| `ink-2` | `#57474D` (7.6) | `#424A5B` (7.8) |
+| `ink-3` | `#6C5A61` (5.6) | `#596173` (5.4) |
+| `rule` | `#E8D9DF` | `#D5DCE8` |
+| `machine` | `#2E46C2` (6.6) | `#2441CC` (6.8) |
+| `human` | `#7E5311` (5.8) | `#7E5311` (5.9) |
+| `check` | `#AE2E1D` (5.7) | `#AE2E1D` (5.7) |
+
+Choosing Pink or Blue while still on the default Paper board also selects the room's
+own board (Blush or Terminal), and the ribbon shows that change. A board you chose
+yourself is kept.
+
+## Boards
+
+Every board has a day tone and a night tone, so a board stays itself when the room
+goes dark. Settings shows them all as one continuous checkerboard, a ribbon of every
+board in a hue journey from neutral through wood, wine, blush, blue, slate and moss to
+ink. The chosen one rises out of it on a spring and is named underneath with its
+tones. Paper is the default.
+
+| board | day light / dark | night light / dark |
+|---|---|---|
+| Paper | `#E6E0D2` / `#B3A994` | `#8C8576` / `#5F594E` |
+| Walnut | `#E9D5B5` / `#B08A62` | `#9C8467` / `#6E5640` |
+| Wine | `#CFCBC2` / `#A33A44` | `#8C8881` / `#8E464C` |
+| Blush | `#F6E4EC` / `#E3A3C0` | `#9B8890` / `#7A5466` |
+| Terminal | `#DDE4F3` / `#546AA6` | `#7F8AA6` / `#45589A` |
+| Slate | `#DDE2E3` / `#8E9DA3` | `#7E888B` / `#535D61` |
+| Moss | `#E4E6D1` / `#8E9A6E` | `#7F8669` / `#565E44` |
+| Ink | `#ECEAE4` / `#7A7770` | `#8E8B85` / `#5C5A55` |
+
+- **Black pieces keep 3:1 everywhere.** No dark square, day or night, is darker
+  than Paper's night tone (relative luminance ≥ 0.10).
+- **Wine** starts from `#7D0D17` on `#CFCBC2` stone. Exact `#7D0D17` gives a black
+  piece only 1.9:1, so the red keeps its hue (355°) but is softened and lifted to
+  the floor.
+- **Terminal** is the machine's own blue, so on it the Twin's last move glows cyan
+  instead of cobalt.
 
 ## The board
 
@@ -90,23 +142,27 @@ Advanced.
 
 ## Navigation
 
-Four destinations, mono, top right: **PLAY · ARCHIVE · TWIN · SETTINGS**. The
-current one is underlined in ochre. Routes are hash-based (`#/meet/year-2024`), so
-the browser's back button works.
+The name sits top left: **you vs. you**, in mono, with the second "you" in Geist
+Pixel. That second you is your Twin, so the name shows the idea before you read
+anything else.
+
+Three destinations, mono, top right: **PLAY · YOUR STYLE · SETTINGS**. The current
+one is underlined in ochre. Routes are hash-based (`#/meet/year-2024`, `#/style`), so
+the browser's back button works. There is no Archive tab: your years live on the
+home, and old `#/archive` links land there.
 
 ## Screens
 
 | screen | what it holds | what it leaves out |
 |---|---|---|
-| **Home** | Shows instead of telling. Left: "What do you want to do with yourself?" · `PLAY YOURSELF` · one summary line. Right: a real position from your recent games that you have faced often ("You've been here 19 times. Your move."). Answer it, and it shows what you usually play there ("Usually O-O: 11 of 19") and what your Twin would play, as two arrows, with the distribution underneath in the machine voice. First visit (no games): "Play against yourself." and the starting position: your first move is compared with players near 1500 ("About 41% of players near 1500 would play e4 too. Yours will learn which one you would play.") → `SHOW ME YOUR CHESS`. Games but no Twin: `BUILD YOUR TWIN` with its estimate (`ROUGHLY 30 MIN · THE FIRST TIME`). | dashboards, feature lists, explanations |
-| **Meet** (the ritual) | `YOU` ↓ `YOU` ↓ `PLAY`. Below, which version of yourself: Current You, Older You (your oldest year), Bullet/Blitz/Rapid You, `ARCHIVE →`. One machine line states what the version is (`OPENINGS + STRENGTH · 2021 · STYLE · 2026 · RATING 592 …`). Side: White · Black · Either. On PLAY the second YOU rises into the first and the board appears. | difficulty sliders, Elo inputs |
+| **Home** | Shows instead of telling. Left: "What do you want to do with yourself?" · `PLAY YOURSELF` · **you, by year**: one small tile per year, oldest to newest. Each tile shows the year in pixels, a hairline whose length is how much you played, and your first move as White that year. The current year has an amber dot. Hovering lights the bar amber and shows a small play mark; a click meets that year's you. Years with too few games stay faint. Under that, **the summary line moves**: real facts about you, one after another (games · years · built, your moves remembered, your opening this year, your rating, your busiest year, your versions, your last game). Each stays as long as it takes to read: 5.2 s plus 55 ms per character. The line has weight: a heavily damped spring lifts it away as it fades, and the next one rises from below on a slightly under-damped spring (ζ ≈ 0.72), landing with one soft overshoot. Hovering or focusing it holds the line still; with reduced motion it doesn't move at all. Right: a real position from your recent games that you have faced often ("You've been here 19 times. Your move."). Answer it, and it shows what you usually play there ("Usually O-O: 11 of 19") and what your Twin would play, as two arrows, with the distribution underneath in the machine voice. First visit (no games): "Play against yourself." and the starting position: your first move is compared with players near 1500 ("About 41% of players near 1500 would play e4 too. Yours will learn which one you would play.") → `SHOW ME YOUR CHESS`. Games but no Twin: `BUILD YOUR TWIN` with its estimate (`ROUGHLY 30 MIN · THE FIRST TIME`). | dashboards, feature lists, explanations |
+| **Meet** (the ritual) | `YOU` ↓ `YOU` ↓ `PLAY`. Below, which version of yourself: Current You, Older You (your oldest year), Bullet/Blitz/Rapid You (a year chosen on the home shows up here too). One machine line states what the version is (`OPENINGS + STRENGTH · 2021 · STYLE · 2026 · RATING 592 …`). Side: White · Black · Either. On PLAY the second YOU rises into the first and the board appears. | difficulty sliders, Elo inputs |
 | **Game** | The board. Above: ■ Your Twin + its version. Below: ● You + typed-move input. Beside: the state in one serif sentence, elapsed time, at most one whisper. `MOVES` (collapsed), `RESIGN` (two-step), `FLIP`. | evaluation bars, probabilities, metrics |
 | **Reflection** | Disclosed one line at a time: `YOU WON.` / `Barely.` → "That was very you." + `MATCH 0.90 · YOU USUALLY 0.82 · 34 DECISIONS` → "You and your Twin parted ways 4 times." + `30 OF 34 DECISIONS IDENTICAL` → `SEE THE DIFFERENCE` · `REPLAY` · `MEET ANOTHER VERSION` · `DONE`. | a move-by-move engine report |
 | **See the difference** | One divergence at a time on the board: your move as an ochre arrow, your Twin's as cobalt. "You chose 18.Bf4." / "Your Twin would have chosen 18.Rd1." / "Both were plausible." / "In this position, you have played Rd1 12 times, and Bf4 twice." (or, in a new position, "You have made this kind of move 73 times before."). | |
 | **Replay** | The game, step by step (`← →`, clickable moves). | |
-| **Twin** (portrait) | `YOU / 2026` in pixels, with a faint serif YOU in ochre behind it: you, behind your reconstruction. Then counts in mono, and observations: one sentence each, its evidence underneath (`CASTLE -1.43 · Z 23.1`). Opening facts from your own counts. One honest line: "A reconstruction from your moves. It imitates what you did, not who you are." | personality scores, radar charts |
-| **Archive** | Time as identity: `YOU / 2025`, `YOU / 2024`… each with games, rating, time controls, signature opening, and `PLAY THIS VERSION` (or "Too few games to meet."). | |
-| **Settings** | Sources (accounts, last import, look for new games, add a source) · Your Twin (built when, from how many games, new games since, rebuild with its cost: `ABOUT 1 H 10 MIN · EVERY GAME IS READ AGAIN AT THE NEW DEPTH`; while work runs, the live line instead) · Analysis depth (Quick/Balanced/Thorough) · Hardware (parallel analyses) · During games (whispers, sound) · Privacy · Data (sizes, Forget your Twin, Forget everything, both confirmed by typing FORGET) · Advanced (temperature, player, model facts, last game PGN). | |
+| **Your style** (the portrait) | Two voices that never overlap: a small italic serif *you* in amber, then `YOU / 2026` in pixels beneath it. You, then your reconstruction, both readable. Then counts in mono, and observations: one sentence each, its evidence underneath (`CASTLE -1.43 · Z 23.1`). Opening facts from your own counts. One honest line: "A reconstruction from your moves. It imitates what you did, not who you are." | personality scores, radar charts |
+| **Settings** | Sources (accounts, last import, look for new games, add a source) · Your Twin (built when, from how many games, new games since, rebuild with its cost: `ABOUT 1 H 10 MIN · EVERY GAME IS READ AGAIN AT THE NEW DEPTH`; while work runs, the live line instead) · Analysis depth (Quick/Balanced/Thorough) · Hardware (parallel analyses) · Appearance (theme: System / Light / Dark / Blue / Pink; board: eight, chosen from the ribbon) · During games (whispers, sound) · Privacy · Data (sizes, Forget your Twin, Forget everything, both confirmed by typing FORGET) · Advanced (temperature, player, model facts, last game PGN). | |
 | **Import** | `SHOW ME YOUR CHESS.` · Chess.com · Lichess · PGN → a username or a file → `BRING THEM`. | |
 | **Build** | No progress bar; three answers. *What is happening:* "Looking for your games." → "9,499 games found." / "We're going through them." *How far along:* every stage listed: finished ones with their time (`24:50`), the current one with its count (`DECISION 26,404 OF 66,011 · 52/S`, `FIT 7 OF 25`, `TEMPERATURE 3 OF 6`), the ones to come faint. *How long:* "About 25 minutes left." and where the number comes from (`ELAPSED 3:12 · FROM THE PACE SO FAR`). First build: "The first time is the slowest. After this, only new games are read." Always: "You can leave this page. It keeps going, and it will be here when you come back." | percentages, spinners, invented precision |
 

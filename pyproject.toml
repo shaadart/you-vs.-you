@@ -1,7 +1,7 @@
 [project]
-name = "pco"
+name = "you-vs-you"
 version = "0.0.1"
-description = "Personal Chess Opponent: a local-first chess opponent that learns how you play."
+description = "You vs. You: a local-first chess opponent that learns how you play."
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
 readme = "README.md"

@@ -1,4 +1,4 @@
-# pco
+# You vs. You
 
 ### Play chess against yourself.
 
@@ -10,7 +10,7 @@ Somewhere inside them is a way of playing that belongs only to you. The openings
 you trust. The piece your hand reaches for first. The castle you keep putting off.
 The mistakes you make when the clock runs low.
 
-pco reads those games and quietly builds someone who plays like that.
+You vs. You reads those games and quietly builds someone who plays like that.
 
 Then it sits down across the board from you.
 
@@ -61,7 +61,7 @@ moves are on the board: mine in amber, my Twin's in blue.
 
 ## It paints a portrait, not a score
 
-<img src="docs/screenshots/twin.png" alt="YOU / 2026. You often delay castling. You step back to regroup more than most. Knights are where your hands go first." width="100%">
+<img src="docs/screenshots/style.png" alt="Your style: a small amber you above YOU / 2026. You often delay castling. You step back to regroup more than most. Knights are where your hands go first." width="100%">
 
 *You often delay castling. Knights are where your hands go first.*
 
@@ -70,9 +70,11 @@ each with its evidence written small underneath. It only says what it is sure of
 
 ## It remembers who you were
 
-<img src="docs/screenshots/archive.png" alt="YOU / 2026, YOU / 2025, YOU / 2024: every year, playable." width="100%">
+<img src="docs/screenshots/years.png" alt="You, by year: 2021 to 2026, each with how much you played and the first move you made as White that year." width="100%">
 
-Every year you played enough games is still here, and you can play it again.
+Every year you played enough games waits on the home screen: how much you played,
+and the first move you made as White. 2021 was 1.e3. Now it's 1.d4. Touch a year
+and you meet who you were then.
 
 ## Building your Twin takes a while the first time. It tells you how long
 
@@ -86,6 +88,19 @@ It always tells you what it's doing, how far along it is, and roughly how much t
 is left. You can wander off while it works. It keeps going, and a small dot in the
 corner keeps you company.
 
+## Make the room yours
+
+Four rooms, eight boards. **Paper** and **Graphite** follow your system, or pick one
+in Settings. **Pink** and **Blue** are softer rooms, and each brings its own board:
+Blush, and Terminal.
+
+<img src="docs/screenshots/paper.png" alt="A game in the Paper room on the Paper board." width="49%">&nbsp;<img src="docs/screenshots/graphite.png" alt="The same game in the dark Graphite room on the Walnut board." width="49%">
+<img src="docs/screenshots/pink.png" alt="The same game in the Pink room on the Blush board." width="49%">&nbsp;<img src="docs/screenshots/blue.png" alt="The same game in the Blue room on the Terminal board." width="49%">
+
+The boards are Paper, Walnut, Wine, Blush, Terminal, Slate, Moss and Ink. Each has a
+day tone and a night tone, and every one keeps black pieces easy to see. Fonts and
+pieces are bundled, so nothing is loaded from the web.
+
 ---
 
 ## Start
@@ -93,8 +108,9 @@ corner keeps you company.
 You need [uv](https://docs.astral.sh/uv/getting-started/installation/). It brings
 the right Python with it.
 
+Clone this repository, then from inside it:
+
 ```sh
-git clone <this repository> && cd <repository>
 uv sync
 uv run pco setup    # once: downloads the human-move model and Stockfish
 uv run pco play     # opens in your browser
@@ -125,7 +141,6 @@ Honestly:
   how we play outside our openings, it turns out, we share with everyone else.
 - **This was measured on games it had never seen.** Each player's newest games were
   held back and used only for testing.
-
 
 ## What it isn't
 
@@ -184,18 +199,19 @@ uv run pytest -q
 uv run ruff check . && uv run ruff format --check .
 ```
 
-The design is in [`docs/DESIGN.md`](docs/DESIGN.md). Engineering notes, decisions,
-experiments and the handoff live in [`AI_CONTEXTS/`](AI_CONTEXTS/); start with
-`HANDOFF.md`.
+The design, from the two voices to every board's colors, is in
+[`docs/DESIGN.md`](docs/DESIGN.md). The original specification is
+[`docs/MASTER_SPEC.md`](docs/MASTER_SPEC.md). The Python package lives in `src/pco/`,
+and the whole interface is one self-contained page: `src/pco/play/static/index.html`.
 
 </details>
 
 <details>
 <summary><b>Credits and licenses</b></summary>
 
-- pco itself: GNU Affero General Public License v3.0 (AGPL-3.0-only). Because
-  pco imports [Maia-3](https://github.com/CSSLab/maia3), it is a derivative work
-  and must be distributed under an AGPL-compatible license.
+- You vs. You itself: GNU Affero General Public License v3.0 (AGPL-3.0-only).
+  Because You vs. You imports [Maia-3](https://github.com/CSSLab/maia3), it is a
+  derivative work and must be distributed under an AGPL-compatible license.
 - Maia-3 by CSSLab (AGPL-3.0).
 - [Stockfish](https://stockfishchess.org) (GPL-3.0), run as a separate program.
 - Chess pieces by Colin M.L. Burnett (GPLv2+, via lichess).

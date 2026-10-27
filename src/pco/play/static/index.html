@@ -3,7 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>pco · you</title>
+<title>You vs. You</title>
+<script id="prefs">try { const d = document.documentElement, t = localStorage.getItem("pco.theme"),
+  b = localStorage.getItem("pco.board"); if (["light", "dark", "blue", "pink"].includes(t)) d.dataset.theme = t;
+  if (b && b !== "paper") d.dataset.board = b; } catch (e) { /* storage unavailable */ }</script>
 <style>
 /* Design spec: docs/DESIGN.md ("Mirror" identity, "Twin" experience). Two voices: human
    (serif, ochre), machine (mono, cobalt). */
@@ -22,7 +25,9 @@
 :root {
   --bg: #F3F0E9; --surface: #FAF8F3; --ink: #191816; --ink-2: #4E4A44; --ink-3: #6B665D;
   --rule: #DCD6CA; --machine: #2747D9; --human: #8A5A12; --check: #B4331F;
-  --sq-light: #E6E0D2; --sq-dark: #B3A994;
+  /* a board has a day tone and a night tone; the theme picks one */
+  --b-l: #E6E0D2; --b-d: #B3A994; --b-l-night: #8C8576; --b-d-night: #5F594E;
+  --sq-light: var(--b-l); --sq-dark: var(--b-d);
   --hl-human: rgba(176, 116, 24, .28); --hl-machine: rgba(39, 71, 217, .22);
   --hl-select: rgba(176, 116, 24, .38); --dot: rgba(25, 24, 22, .24);
   --shadow: 0 34px 60px -44px rgba(40, 32, 18, .45);
@@ -31,19 +36,58 @@
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --pixel: "Geist Pixel", var(--mono);
   --ease: cubic-bezier(.2, .7, .2, 1);
+  /* a damped spring (zeta 0.72): one soft overshoot, then rest */
+  --spring: linear(0, 0.018 2.5%, 0.066 5%, 0.134 7.5%, 0.215 10%, 0.303 12.5%, 0.393 15%, 0.482 17.5%, 0.566 20%, 0.644 22.5%, 0.715 25%, 0.778 27.5%, 0.833 30%, 0.88 32.5%, 0.92 35%, 0.952 37.5%, 0.978 40%, 0.998 42.5%, 1.013 45%, 1.024 47.5%, 1.032 50%, 1.038 55%, 1.037 60%, 1.032 65%, 1.026 70%, 1.019 75%, 1.013 80%, 1.008 85%, 1.004 90%, 1.001 95%, 1);
   color-scheme: light;
 }
+/* Graphite: when the system is dark and no explicit theme is chosen */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) .ribbon button { --tl: var(--ln); --td: var(--dn); }
+  :root:not([data-theme]) {
     --bg: #111110; --surface: #191917; --ink: #ECE8E0; --ink-2: #B3AEA4; --ink-3: #8F8A80;
     --rule: #2B2A27; --machine: #93A6FF; --human: #E3AE52; --check: #F07A64;
-    --sq-light: #8C8576; --sq-dark: #5F594E;
+    --sq-light: var(--b-l-night); --sq-dark: var(--b-d-night);
     --hl-human: rgba(227, 174, 82, .30); --hl-machine: rgba(147, 166, 255, .28);
     --hl-select: rgba(227, 174, 82, .42); --dot: rgba(236, 232, 224, .30);
     --shadow: 0 34px 60px -40px rgba(0, 0, 0, .8);
     color-scheme: dark;
   }
 }
+:root[data-theme="dark"] .ribbon button { --tl: var(--ln); --td: var(--dn); }
+:root[data-theme="dark"] {
+  --bg: #111110; --surface: #191917; --ink: #ECE8E0; --ink-2: #B3AEA4; --ink-3: #8F8A80;
+  --rule: #2B2A27; --machine: #93A6FF; --human: #E3AE52; --check: #F07A64;
+  --sq-light: var(--b-l-night); --sq-dark: var(--b-d-night);
+  --hl-human: rgba(227, 174, 82, .30); --hl-machine: rgba(147, 166, 255, .28);
+  --hl-select: rgba(227, 174, 82, .42); --dot: rgba(236, 232, 224, .30);
+  --shadow: 0 34px 60px -40px rgba(0, 0, 0, .8);
+  color-scheme: dark;
+}
+/* two more rooms, both light. Pink and blue live in the room and its board; the two voices
+   stay apart (amber is you, cobalt is the machine). Every text colour is >= 5:1 on bg. */
+:root[data-theme="pink"] {
+  --bg: #F6EDF0; --surface: #FBF6F8; --ink: #221A1D; --ink-2: #57474D; --ink-3: #6C5A61;
+  --rule: #E8D9DF; --machine: #2E46C2; --human: #7E5311; --check: #AE2E1D;
+  --shadow: 0 34px 60px -44px rgba(60, 24, 40, .45);
+  color-scheme: light;
+}
+:root[data-theme="blue"] {
+  --bg: #ECF0F6; --surface: #F6F8FB; --ink: #141821; --ink-2: #424A5B; --ink-3: #596173;
+  --rule: #D5DCE8; --machine: #2441CC; --human: #7E5311; --check: #AE2E1D;
+  --shadow: 0 34px 60px -44px rgba(20, 28, 48, .45);
+  color-scheme: light;
+}
+/* boards (Settings → Appearance): Paper is the default above */
+:root[data-board="walnut"] { --b-l: #E9D5B5; --b-d: #B08A62; --b-l-night: #9C8467; --b-d-night: #6E5640; }
+:root[data-board="slate"] { --b-l: #DDE2E3; --b-d: #8E9DA3; --b-l-night: #7E888B; --b-d-night: #535D61; }
+:root[data-board="moss"] { --b-l: #E4E6D1; --b-d: #8E9A6E; --b-l-night: #7F8669; --b-d-night: #565E44; }
+:root[data-board="ink"] { --b-l: #ECEAE4; --b-d: #7A7770; --b-l-night: #8E8B85; --b-d-night: #5C5A55; }
+/* wine: #7D0D17 on #CFCBC2 stone, softened and lifted until black pieces keep 3:1 */
+:root[data-board="wine"] { --b-l: #CFCBC2; --b-d: #A33A44; --b-l-night: #8C8881; --b-d-night: #8E464C; }
+:root[data-board="blush"] { --b-l: #F6E4EC; --b-d: #E3A3C0; --b-l-night: #9B8890; --b-d-night: #7A5466; }
+/* terminal: the machine's own blue; its moves glow cyan so they still show on blue squares */
+:root[data-board="terminal"] { --b-l: #DDE4F3; --b-d: #546AA6; --b-l-night: #7F8AA6; --b-d-night: #45589A;
+  --hl-machine: rgba(40, 200, 220, .34); }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -61,12 +105,13 @@ a { text-decoration: none; }
 .machine .san { text-transform: none; letter-spacing: .02em; }  /* chess notation keeps its case */
 .human { font: italic 400 20px/28px var(--serif); color: var(--ink-2); }
 
-/* ---- top bar: brand + four destinations ---- */
+/* ---- top bar: the name + three destinations ---- */
 .top { height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 16px;
   padding: 0 max(28px, env(safe-area-inset-left)); border-bottom: 1px solid var(--rule); }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand .sq { width: 8px; height: 8px; background: var(--machine); }
-.brand .word { font: 500 14px var(--mono); letter-spacing: .02em; }
+.brand .word { font: 500 14px var(--mono); letter-spacing: .02em; white-space: nowrap; }
+.brand .twin-you { font: 500 15px var(--pixel); letter-spacing: -.03em; }  /* the second you: your Twin */
 .nav { display: flex; gap: 2px; }
 .pill { margin-right: auto; margin-left: 22px; display: inline-flex; align-items: center; gap: 9px;
   font: 500 10.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
@@ -112,17 +157,37 @@ a { text-decoration: none; }
 @keyframes dots { to { width: 4ch; } }
 .notice { margin: 14px 0 0; color: var(--check); font-size: 13px; }
 
-/* the second YOU: an echo set at another optical size, slightly displaced */
-.echo { position: relative; display: inline-block; margin-right: .12em; }
-.echo::after { content: attr(data-word); position: absolute; left: .04em; top: .02em; z-index: -1;
-  font-family: var(--serif); font-weight: 400; letter-spacing: -.01em; color: var(--human); opacity: .2;
-  pointer-events: none; }
 
 /* ---- home: show, don't tell ---- */
 .home { max-width: 1120px; margin: 0 auto; padding: clamp(36px, 9vh, 96px) 32px 64px; display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 400px); gap: 72px; align-items: center; }
 .home .actions { margin-top: 44px; }
 .home .estimate { margin-top: 14px; }
+/* your years: see them, and play any of them, from here */
+.years { margin-top: 40px; }
+.years .label { margin-bottom: 8px; }
+.year-row { display: flex; flex-wrap: wrap; gap: 2px; margin: 0 -8px; }
+.year-tile { position: relative; width: 78px; padding: 8px 8px 7px; border: 0; border-radius: 4px; background: none;
+  display: flex; flex-direction: column; align-self: flex-start; text-align: left; cursor: pointer;
+  color: var(--ink-2); transition: background .2s, color .2s; }
+.year-tile .yr { display: flex; align-items: center; justify-content: space-between; font: 500 17px/1 var(--pixel);
+  letter-spacing: -.03em; }
+.year-tile .go { width: 9px; height: 9px; fill: var(--human); opacity: 0; transform: translateX(-3px);
+  transition: opacity .2s, transform .2s var(--ease); }
+.year-tile .vol { display: block; position: relative; height: 2px; margin: 9px 0 7px; background: var(--rule); }
+.year-tile .vol i { position: absolute; inset: 0 auto 0 0; background: var(--ink-3); transition: background .2s; }
+.year-tile .op { display: block; min-height: 13px; font: 400 10.5px/13px var(--mono); color: var(--ink-3); }
+.year-tile.now .op::after { content: ""; display: inline-block; width: 5px; height: 5px; margin-left: 6px;
+  border-radius: 50%; background: var(--human); vertical-align: 1px; }  /* now: you, in amber */
+.year-tile:hover, .year-tile:focus-visible { background: var(--surface); color: var(--ink); }
+.year-tile:hover .go, .year-tile:focus-visible .go { opacity: 1; transform: none; }
+.year-tile:hover .vol i, .year-tile:focus-visible .vol i { background: var(--human); }
+.year-tile:disabled { cursor: default; opacity: .4; background: none; }
+.year-tile:disabled .go { display: none; }
+/* the summary keeps telling you things about yourself; hovering holds it */
+.ticker { height: 18px; overflow: hidden; }
+.ticker span { display: inline-block; will-change: transform, opacity; transition: color .3s; }
+.ticker:hover span { color: var(--ink-2); }
 .glimpse { margin: 0; }
 .glimpse .prompt { margin: 0 0 14px; font: italic 400 19px/26px var(--serif); color: var(--ink-2); }
 .glimpse .board-wrap { box-shadow: 0 24px 44px -36px rgba(40, 32, 18, .5); }
@@ -236,8 +301,12 @@ svg.board .drag { pointer-events: none; filter: drop-shadow(0 6px 6px rgba(0,0,0
 .replay-moves span { cursor: pointer; }
 
 /* ---- twin portrait, archive ---- */
-.portrait .you-year { font: 500 clamp(56px, 10vw, 108px)/1 var(--pixel); letter-spacing: -.05em; }
-.portrait .you-year .year { color: var(--ink-3); }
+/* you, then your reconstruction: the person in the serif, the Twin in pixels, never on top of each other */
+.portrait .you-year { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.portrait .you-human { font: italic 400 clamp(26px, 3.4vw, 40px)/1 var(--serif); color: var(--human);
+  letter-spacing: -.01em; margin-left: .08em; }
+.portrait .you-pixel { font: 500 clamp(56px, 10vw, 108px)/1 var(--pixel); letter-spacing: -.05em; }
+.portrait .you-pixel .year { color: var(--ink-3); }
 .portrait .counts { margin-top: 22px; }
 .observations { list-style: none; margin: 56px 0 0; padding: 0; }
 .observations li { padding: 22px 0; border-top: 1px solid var(--rule); }
@@ -245,13 +314,6 @@ svg.board .drag { pointer-events: none; filter: drop-shadow(0 6px 6px rgba(0,0,0
 .observations li p.machine { margin-top: 6px; font: 400 11px/17px var(--mono); }
 .footnote { margin-top: 48px; }
 .footnote p { margin: 6px 0 0; }
-.era { padding: 30px 0; border-top: 1px solid var(--rule); display: grid; grid-template-columns: 1fr auto;
-  align-items: end; gap: 8px 24px; }
-.era h2 { margin: 0; font: 500 clamp(30px, 4.6vw, 46px)/1 var(--pixel); letter-spacing: -.04em; }
-.era h2 .year { color: var(--ink-3); }
-.era .machine { grid-column: 1; }
-.era .side { grid-row: 1 / span 2; grid-column: 2; align-self: center; }
-.era .side .human { font-size: 16px; }
 
 /* ---- settings ---- */
 .settings section { padding: 26px 0; border-top: 1px solid var(--rule); }
@@ -274,6 +336,21 @@ dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px;
   font: 400 11px/17px var(--mono); letter-spacing: .06em; text-transform: uppercase; }
 dl.facts dt { color: var(--ink-3); } dl.facts dd { margin: 0; color: var(--ink-2); word-break: break-all; }
 input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
+/* boards: one continuous checkerboard made of every board; the chosen one rises out of it */
+.ribbon { display: flex; width: max-content; max-width: 100%; margin: 16px 0 26px; border-radius: 3px;
+  box-shadow: 0 18px 30px -24px rgba(40, 32, 18, .55); }
+.ribbon button { --tl: var(--l); --td: var(--d); position: relative; width: 52px; height: 52px; padding: 0;
+  border: 0; cursor: pointer; background: repeating-conic-gradient(var(--tl) 0 25%, var(--td) 0 50%) 0 0 / 100% 100%;
+  transition: transform .7s var(--spring), box-shadow .5s var(--ease); }
+.ribbon button:first-child { border-radius: 3px 0 0 3px; }
+.ribbon button:last-child { border-radius: 0 3px 3px 0; }
+.ribbon button:hover { transform: translateY(-3px); z-index: 1; }
+.ribbon button[aria-checked="true"] { transform: translateY(-9px) scale(1.06); z-index: 2; border-radius: 2px;
+  box-shadow: 0 16px 22px -12px rgba(0, 0, 0, .5); }
+.ribbon button::after { content: ""; position: absolute; left: 50%; bottom: -17px; width: 5px; height: 5px;
+  margin-left: -2.5px; border-radius: 50%; background: var(--human); opacity: 0; transition: opacity .3s; }
+.ribbon button[aria-checked="true"]::after { opacity: 1; }
+.board-name { margin-top: -6px; }
 
 /* ---- import & build ---- */
 .sources { margin-top: 48px; display: flex; flex-wrap: wrap; gap: 8px 36px; }
@@ -310,7 +387,7 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
 /* ---- small screens: the board stays dominant, nothing stacks into cards ---- */
 @media (max-width: 860px) {
   .top { height: 48px; padding: 0 16px; }
-  .brand .word { display: none; }
+  .brand .word { font-size: 13px; }
   .nav a { padding: 8px 6px; letter-spacing: .1em; }
   .column { padding: 40px 20px 56px; }
   .game, .review { grid-template-columns: 1fr; padding: 4px 0 0; gap: 0; }
@@ -324,11 +401,11 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
   .cmd input { width: 96px; }
   svg.board .coord { font-size: 20px; }
   .review .diff, .review .replay-side { padding: 18px 16px 32px; }
-  .era { grid-template-columns: 1fr; }
   .home { grid-template-columns: 1fr; gap: 40px; padding: 32px 20px 56px; }
   .pill { margin-left: 12px; }
   .pill .long { display: none; }
-  .era .side { grid-row: auto; grid-column: 1; }
+  .year-tile { width: 68px; }
+  .ribbon button { width: 40px; height: 40px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -353,12 +430,11 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
 </defs></svg>
 
 <header class="top">
-  <a class="brand" href="#/" aria-label="Home"><span class="sq" aria-hidden="true"></span><span class="word">pco</span></a>
+  <a class="brand" href="#/" aria-label="You vs. You, home"><span class="sq" aria-hidden="true"></span><span class="word">you vs. <span class="twin-you">you</span></span></a>
   <a id="job-pill" class="pill" href="#/build" hidden><span class="pulse" aria-hidden="true"></span><span id="job-pill-text"></span></a>
   <nav class="nav" aria-label="Destinations">
     <a href="#/" data-nav="play">Play</a>
-    <a href="#/archive" data-nav="archive">Archive</a>
-    <a href="#/twin" data-nav="twin">Twin</a>
+    <a href="#/style" data-nav="style">Your style</a>
     <a href="#/settings" data-nav="settings">Settings</a>
   </nav>
 </header>
@@ -374,7 +450,11 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
         <button id="home-resume" class="quiet" hidden>Return to your game</button>
       </div>
       <p id="home-estimate" class="machine estimate" hidden></p>
-      <p id="home-summary" class="summary"></p>
+      <div id="home-years" class="years" hidden>
+        <p class="label">You, by year</p>
+        <div id="years" class="year-row" role="list"></div>
+      </div>
+      <p id="home-summary" class="summary ticker" aria-live="off" title="Hover to hold"><span id="ticker-line"></span></p>
     </div>
     <figure id="glimpse" class="glimpse" hidden>
       <figcaption id="glimpse-prompt" class="prompt"></figcaption>
@@ -497,7 +577,7 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
   <!-- TWIN: a portrait -->
   <section id="s-twin" class="screen column portrait" hidden>
     <div id="twin-body">
-      <h1 class="you-year"><span class="echo" data-word="YOU">YOU</span> <span class="year" id="twin-year"></span></h1>
+      <h1 class="you-year"><span class="you-human">you</span><span class="you-pixel">YOU <span class="year" id="twin-year"></span></span></h1>
       <p id="twin-counts" class="machine counts"></p>
       <ul id="observations" class="observations"></ul>
       <p id="twin-thin" class="human" hidden>Rebuild your Twin to see more of yourself here.</p>
@@ -511,12 +591,6 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
       <h1 class="headline">Your Twin isn't here yet.</h1>
       <div class="actions" style="margin-top:36px"><button class="cta" data-go="import">Show me your chess</button></div>
     </div>
-  </section>
-
-  <!-- ARCHIVE: time as identity -->
-  <section id="s-archive" class="screen column" hidden>
-    <p class="label">Archive</p>
-    <div id="eras"></div>
   </section>
 
   <!-- SETTINGS: practical -->
@@ -550,6 +624,22 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
       <p class="label">Hardware</p>
       <div class="seg" id="set-workers" role="group" aria-label="Parallel analysis"></div>
       <p id="set-workers-machine" class="machine" style="margin-top:10px"></p>
+    </section>
+    <section>
+      <p class="label">Appearance</p>
+      <div class="row"><span class="body">Theme</span><div class="seg" id="set-theme"><button data-v="system">System</button><button data-v="light">Light</button><button data-v="dark">Dark</button><button data-v="blue">Blue</button><button data-v="pink">Pink</button></div></div>
+      <div class="row"><span class="body">Board</span></div>
+      <div class="ribbon" id="set-board" role="radiogroup" aria-label="Board">
+        <button role="radio" data-board="paper" data-name="Paper" aria-label="Paper" title="Paper" style="--l:#E6E0D2;--d:#B3A994;--ln:#8C8576;--dn:#5F594E"></button>
+        <button role="radio" data-board="walnut" data-name="Walnut" aria-label="Walnut" title="Walnut" style="--l:#E9D5B5;--d:#B08A62;--ln:#9C8467;--dn:#6E5640"></button>
+        <button role="radio" data-board="wine" data-name="Wine" aria-label="Wine" title="Wine" style="--l:#CFCBC2;--d:#A33A44;--ln:#8C8881;--dn:#8E464C"></button>
+        <button role="radio" data-board="blush" data-name="Blush" aria-label="Blush" title="Blush" style="--l:#F6E4EC;--d:#E3A3C0;--ln:#9B8890;--dn:#7A5466"></button>
+        <button role="radio" data-board="terminal" data-name="Terminal" aria-label="Terminal" title="Terminal" style="--l:#DDE4F3;--d:#546AA6;--ln:#7F8AA6;--dn:#45589A"></button>
+        <button role="radio" data-board="slate" data-name="Slate" aria-label="Slate" title="Slate" style="--l:#DDE2E3;--d:#8E9DA3;--ln:#7E888B;--dn:#535D61"></button>
+        <button role="radio" data-board="moss" data-name="Moss" aria-label="Moss" title="Moss" style="--l:#E4E6D1;--d:#8E9A6E;--ln:#7F8669;--dn:#565E44"></button>
+        <button role="radio" data-board="ink" data-name="Ink" aria-label="Ink" title="Ink" style="--l:#ECEAE4;--d:#7A7770;--ln:#8E8B85;--dn:#5C5A55"></button>
+      </div>
+      <p id="set-board-name" class="machine board-name"></p>
     </section>
     <section>
       <p class="label">During games</p>
@@ -647,7 +737,8 @@ const ui = {
   version: "current", side: store.get("side", "either"), whisperPly: null, whisperTimer: null,
   sound: store.get("sound", "on") === "on", whispers: store.get("whispers", "on") === "on",
   diffIndex: 0, replayPly: 0, reviewMode: null, source: null, jobTimer: null, fetchedAt: 0,
-  forget: null, settings: null,
+  forget: null, settings: null, years: [], tickerTimer: null, tickerFacts: [], tickerIndex: 0, tickerHold: false,
+  theme: store.get("theme", "system"), board: store.get("board", "paper"),
 };
 
 /* ------------------------------------------------------------ words (human voice) */
@@ -788,12 +879,14 @@ const sleep = ms => new Promise(res => setTimeout(res, ms));
 const paceFor = c => Math.min(1000, 250 + 750 * (1 - c.probability));
 
 /* ------------------------------------------------------------ router */
-const SCREENS = ["home", "meet", "game", "reflection", "review", "twin", "archive", "settings", "import", "build"];
+const SCREENS = ["home", "meet", "game", "reflection", "review", "twin", "settings", "import", "build"];
 const NAV = { home: "play", meet: "play", game: "play", reflection: "play", review: "play",
-  twin: "twin", archive: "archive", settings: "settings", import: "settings", build: "settings" };
+  twin: "style", settings: "settings", import: "settings", build: "settings" };
+const ALIASES = { style: "twin" };  // "Your style" is the portrait; old #/archive links land on the home
 function parseRoute() {
   const h = (window.location && window.location.hash) || "";
-  const [name, param] = h.replace(/^#\/?/, "").split("/");
+  const [raw, param] = h.replace(/^#\/?/, "").split("/");
+  const name = ALIASES[raw] || raw;
   return { name: SCREENS.includes(name) ? name : "home", param: param || null };
 }
 function go(name, param) {
@@ -1179,6 +1272,10 @@ const ENTER = {
     if (home.job) ui.job = home.job;
     renderHome();
     loadGlimpse();
+    const r = home.games ? await request("/api/archive") : { ok: false };
+    ui.years = r.ok ? r.data.years : [];
+    renderYears(ui.years);
+    startTicker(tickerFacts(home, ui.years));
   },
   async meet(param) {
     $("ritual").classList.remove("converge");
@@ -1218,10 +1315,6 @@ const ENTER = {
     $("twin-body").hidden = !r.ok; $("twin-none").hidden = r.ok;
     if (r.ok) renderPortrait(r.data);
   },
-  async archive() {
-    const r = await request("/api/archive");
-    if (r.ok) renderArchive(r.data);
-  },
   async settings() {
     await loadHome();
     const r = await request("/api/settings");
@@ -1241,9 +1334,7 @@ function renderVersions() {
     b.addEventListener("click", () => { ui.version = v.id; renderVersions(); });
     return b;
   });
-  const archive = document.createElement("a");
-  archive.href = "#/archive"; archive.textContent = "Archive →";
-  $("versions").replaceChildren(...buttons, archive);
+  $("versions").replaceChildren(...buttons);
   const v = versions.find(x => x.id === ui.version) || versions[0];
   $("meet-basis").innerHTML = `${esc(v.basis)} · RATING ${v.rating} · ${n(v.games)} GAMES${signature(v.signature)}`;
   for (const b of $("sides").children) b.setAttribute("aria-pressed", String(b.dataset.side === ui.side));
@@ -1277,7 +1368,7 @@ function renderHome() {
     : built ? "What do you want to do with yourself?" : "Your games are here. Your Twin isn't, yet.";
   $("home-play").textContent = first ? "Show me your chess" : built ? "Play yourself" : running ? "See it being built" : "Build your Twin";
   $("home-resume").hidden = !h.game;
-  $("home-summary").textContent = homeSummary(h);
+  $("ticker-line").textContent = homeSummary(h);
   $("home-estimate").hidden = !(h.games && !built && !running && h.estimate);
   $("home-estimate").textContent = estimateLine(h.estimate);
   renderHomeJob();
@@ -1451,25 +1542,102 @@ function renderPortrait(t) {
     + ` · RATING ${m.rating} · TEMPERATURE ${m.temperature}`;
 }
 
-/* archive: time as identity */
-function renderArchive(a) {
-  $("eras").replaceChildren(...a.years.map(y => {
-    const div = document.createElement("div"); div.className = "era";
-    const sig = signature(y.signature);
-    div.innerHTML = `<h2><span>YOU</span> <span class="year">/ ${esc(y.year)}</span></h2>`
-      + `<p class="machine">${n(y.games)} GAMES${y.rating ? ` · RATING ${y.rating}` : ""} · ${esc(y.tempos.join(", ").toUpperCase())}${sig}${y.now ? " · NOW" : ""}</p>`;
-    const side = document.createElement("div"); side.className = "side";
-    if (y.version) {
-      const b = document.createElement("button"); b.className = "quiet"; b.textContent = "Play this version";
-      b.addEventListener("click", () => { ui.version = y.version; go("meet", y.version); });
-      side.append(b);
-    } else {
-      const p = document.createElement("p"); p.className = "human"; p.textContent = "Too few games to meet."; side.append(p);
-    }
-    div.append(side);
-    return div;
+/* your years, on the home: oldest to newest, each playable */
+function renderYears(years) {
+  const ys = (years || []).slice().sort((a, b) => a.year.localeCompare(b.year));
+  $("home-years").hidden = ys.length < 2;  // a single year is just "you"
+  const most = Math.max(1, ...ys.map(y => y.games));
+  $("years").replaceChildren(...ys.map(y => {
+    const b = document.createElement("button");
+    b.className = "year-tile" + (y.now ? " now" : "");
+    b.dataset.version = y.version || "";
+    b.disabled = !y.version;
+    b.setAttribute("aria-label", y.version ? `Play You · ${y.year}` : `${y.year}: too few games to meet`);
+    b.title = y.version
+      ? `Play You · ${y.year}${y.now ? " (now)" : ""} · ${n(y.games)} games${y.rating ? ` · rating ${y.rating}` : ""}`
+      : `${n(y.games)} games · too few to meet`;
+    b.innerHTML = `<span class="yr">${esc(y.year)}<svg class="go" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 1.2 9 5 2 8.8z"/></svg></span>`
+      + `<span class="vol"><i style="width:${Math.max(6, Math.round(100 * y.games / most))}%"></i></span>`
+      + `<span class="op">${y.signature ? esc(y.signature.move) : ""}</span>`;
+    b.addEventListener("click", () => { if (y.version) { ui.version = y.version; go("meet", y.version); } });
+    return b;
   }));
 }
+
+/* the summary line: real facts about you, one after another; hovering holds it */
+function tickerFacts(h, years) {
+  if (!h || !h.games) return [];
+  const facts = [homeSummary(h)];
+  const ys = years || [], now = ys.find(y => y.now);
+  if (h.decisions) facts.push(`${n(h.decisions)} of your moves, remembered`);
+  if (now && now.signature) facts.push(`${now.signature.move} in ${Math.round(now.signature.share * 100)}% of your games as White this year`);
+  if (h.rating) facts.push(`Current You plays at ${h.rating}`);
+  if (ys.length > 1) {
+    const top = ys.reduce((a, b) => (b.games > a.games ? b : a));
+    facts.push(`Most games in ${top.year}: ${n(top.games)}`);
+  }
+  if (h.versions > 1) facts.push(`${h.versions} versions of you to play`);
+  if (h.last_game) facts.push(`Last game ${dmy(h.last_game)}`);
+  return facts;
+}
+// The line has weight. A damped spring lifts it away; the next one rises from below and
+// settles with one small overshoot. Each stays up as long as it takes to read it.
+const DWELL_MS = 5200, READ_MS_PER_CHAR = 55, SWAP_MS = 1000, RESUME_MS = 1800;
+const dwellFor = text => DWELL_MS + READ_MS_PER_CHAR * text.length;
+function spring(from, to, { k, c, v = 0 }, onFrame, onRest) {
+  // x'' = -k (x - to) - c x', integrated per frame (semi-implicit Euler, steps clamped)
+  let x = from, last = performance.now();
+  const step = () => {
+    const now = performance.now(), dt = Math.min(0.032, (now - last) / 1000);
+    last = now;
+    v += (-k * (x - to) - c * v) * dt;
+    x += v * dt;
+    if (onFrame(x, v) === false) return;  // the frame callback may end the motion early
+    if (Math.abs(x - to) < 0.05 && Math.abs(v) < 0.5) { onFrame(to, 0); if (onRest) onRest(); return; }
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+function startTicker(facts) {
+  clearTimeout(ui.tickerTimer);
+  ui.tickerFacts = facts; ui.tickerIndex = 0; ui.tickerMotion = (ui.tickerMotion || 0) + 1;
+  const line = $("ticker-line");
+  line.textContent = facts[0] || ""; line.style.transform = ""; line.style.opacity = "";
+  if (facts.length < 2 || reducedMotion) return;  // nothing to change, or motion not wanted
+  ui.tickerTimer = setTimeout(advanceTicker, dwellFor(facts[0]));
+}
+function advanceTicker() {
+  if (ui.tickerHold || ui.route !== "home" || document.hidden) {
+    ui.tickerTimer = setTimeout(advanceTicker, RESUME_MS);  // held: wait, then carry on gently
+    return;
+  }
+  ui.tickerIndex = (ui.tickerIndex + 1) % ui.tickerFacts.length;
+  const text = ui.tickerFacts[ui.tickerIndex];
+  tickTo(text);
+  ui.tickerTimer = setTimeout(advanceTicker, SWAP_MS + dwellFor(text));
+}
+function tickTo(text) {
+  const line = $("ticker-line"), motion = (ui.tickerMotion = (ui.tickerMotion || 0) + 1);
+  if (ui.noPace) { line.textContent = text; return; }
+  const place = (x, fade) => { line.style.transform = `translateY(${x.toFixed(2)}px)`; line.style.opacity = String(fade); };
+  // away: a soft upward push, heavily damped, fading as it rises
+  spring(0, -14, { k: 60, c: 14, v: -30 }, x => {
+    if (motion !== ui.tickerMotion) return false;
+    const fade = Math.max(0, 1 - Math.abs(x) / 12);
+    place(x, fade);
+    if (fade > 0) return true;
+    line.textContent = text;
+    // in: from below, a little under-damped, so it lands and settles
+    spring(14, 0, { k: 80, c: 13 }, y => {
+      if (motion !== ui.tickerMotion) return false;
+      place(y, Math.max(0, 1 - Math.abs(y) / 14));
+      return true;
+    });
+    return false;
+  });
+}
+for (const [ev, hold] of [["mouseenter", true], ["mouseleave", false], ["focusin", true], ["focusout", false]])
+  $("home-summary").addEventListener(ev, () => { ui.tickerHold = hold; });
 
 /* settings: practical */
 function seg(container, value, key) {
@@ -1505,6 +1673,8 @@ function renderSettings(s) {
   for (const b of wb) b.addEventListener("click", () => saveSettings({ workers: +b.dataset.w }));
   seg($("set-workers"), workers, "w");
   $("set-workers-machine").textContent = `${s.cores} CORES · ${workers} PARALLEL ANALYSES${s.prefs.workers ? "" : " · AUTO"}`;
+  seg($("set-theme"), ui.theme, "v");
+  renderBoardChoice();
   seg($("set-whispers"), ui.whispers ? "on" : "off", "v");
   seg($("set-sound"), ui.sound ? "on" : "off", "v");
   $("set-home").textContent = s.storage.home;
@@ -1534,6 +1704,38 @@ async function saveSettings(change) {
   else ENTER.settings();
 }
 for (const b of $("set-depth").children) b.addEventListener("click", () => saveSettings({ speed: b.dataset.speed }));
+const THEMES = ["light", "dark", "blue", "pink"];
+const ROOM_BOARD = { pink: "blush", blue: "terminal" };  // a room's own board, when you're still on Paper
+function applyAppearance() {
+  const d = document.documentElement;
+  if (THEMES.includes(ui.theme)) d.dataset.theme = ui.theme; else delete d.dataset.theme;
+  if (ui.board !== "paper") d.dataset.board = ui.board; else delete d.dataset.board;
+}
+function chooseTheme(theme) {
+  ui.theme = theme; store.set("theme", ui.theme);
+  if (ROOM_BOARD[theme] && ui.board === "paper") { ui.board = ROOM_BOARD[theme]; store.set("board", ui.board); }
+  applyAppearance(); seg($("set-theme"), ui.theme, "v");
+  renderBoardChoice();  // its tones follow the room
+}
+for (const b of $("set-theme").children) b.addEventListener("click", () => chooseTheme(b.dataset.v));
+function renderBoardChoice() {
+  let chosen = null;
+  for (const b of $("set-board").children) {
+    const on = b.dataset.board === ui.board;
+    b.setAttribute("aria-checked", String(on));
+    if (on) chosen = b;
+  }
+  if (!chosen) return;
+  const theme = document.documentElement.dataset.theme;
+  const night = theme === "dark"
+    || (!theme && !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches));
+  const st = chosen.style;
+  const tones = night ? [st.getPropertyValue("--ln"), st.getPropertyValue("--dn")] : [st.getPropertyValue("--l"), st.getPropertyValue("--d")];
+  $("set-board-name").textContent = [chosen.dataset.name, ...tones.map(t => t.trim())].join(" · ").toUpperCase();
+}
+for (const b of $("set-board").children) b.addEventListener("click", () => {
+  ui.board = b.dataset.board; store.set("board", ui.board); applyAppearance(); renderBoardChoice();
+});
 for (const b of $("set-whispers").children) b.addEventListener("click", () => {
   ui.whispers = b.dataset.v === "on"; store.set("whispers", b.dataset.v); seg($("set-whispers"), b.dataset.v, "v");
 });
@@ -1736,7 +1938,8 @@ function tick(capture) {
 
 window.__pco = { clickSquare, resolveTyped, paceFor, statusText, playMove, opponentTurn, api, ui, layers, go, show,
   homeSummary, whisperCopy, reflectionCopy, differenceCopy, afterMove, parseBoard, meet, renderJob,
-  timeLeft, about, estimateLine, glimpseCopy, glimpseClick, renderPill, pollJob,
+  timeLeft, about, estimateLine, glimpseCopy, glimpseClick, renderPill, pollJob, tickerFacts, tickTo,
+  applyAppearance, chooseTheme, spring, dwellFor,
   get glimpse() { return glimpse; },
   get state() { return state; }, get home() { return home; }, get reflection() { return reflection; },
   set reflection(r) { reflection = r; } };
