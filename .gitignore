@@ -6,5 +6,19 @@ __pycache__/
 dist/
 # Local runtime home (models, engines, player data) when PCO_HOME points inside the repo
 /.pco/
-CLAUDE.md
+
+# Generated artifacts (keep local, not staged)
+graphify-out/
+.graphify-analysis.json
+.graphify-labels.json
+
+# Claude Code local state (not staged)
+.claude/
+.ponytail-active
+
+# Code review artifacts (not staged)
+code-review-findings.json
+code-review-findings.md
+
+# Local AI session contexts (not staged)
 AI_CONTEXTS/
