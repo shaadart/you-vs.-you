@@ -52,6 +52,9 @@ class AnalysisCache:
             if str(path) == ":memory:" or "locked" in str(exc):  # busy is not damaged
                 raise
             # Derived, reproducible data: set the damaged file aside and start fresh.
+            # (Windows cannot rename a file that is still open.)
+            if (broken := getattr(self, "conn", None)) is not None:
+                broken.close()
             stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
             moved = Path(f"{path}.corrupt-{stamp}")
             Path(path).replace(moved)

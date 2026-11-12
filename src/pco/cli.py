@@ -458,7 +458,7 @@ def cmd_build(settings: Settings, args: argparse.Namespace) -> int:
         f"engine {cache.hits['engine']}/{cache.misses['engine']}"
     )
     if args.export:
-        with open(args.export, "w") as f:
+        with open(args.export, "w", encoding="utf-8") as f:
             for a in analyses:
                 f.write(json.dumps(episode_record(a)) + "\n")
         print(f"  exported {n} records to {args.export}")
@@ -517,7 +517,7 @@ def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
         )
     )
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(report, indent=1))
+    out.write_text(json.dumps(report, indent=1), encoding="utf-8")
     print(format_report(report))
     print(f"\nreport: {out}")
     return 0

@@ -346,7 +346,9 @@ def test_page_uses_no_remote_resources(server):
 
 def test_page_never_calls_the_twin_a_machine():
     """Visible words (markup text, outside scripts and styles) say "you", not AI/bot/engine."""
-    page = (Path(__file__).parent.parent / "src/pco/play/static/index.html").read_text()
+    page = (Path(__file__).parent.parent / "src/pco/play/static/index.html").read_text(
+        encoding="utf-8"
+    )
     visible = re.sub(r"<(script|style)>.*?</\1>", "", page, flags=re.S)
     visible = re.sub(r"<[^>]+>", " ", visible)
     assert "What do you want to do with yourself?" in visible and "SHOW ME YOUR CHESS." in visible

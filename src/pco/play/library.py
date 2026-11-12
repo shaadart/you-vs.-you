@@ -250,7 +250,7 @@ class Library:
 
     def prefs(self) -> dict[str, Any]:
         try:
-            stored = json.loads(self._prefs_path.read_text())
+            stored = json.loads(self._prefs_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             stored = {}
         return {k: stored.get(k, v) for k, v in DEFAULT_PREFS.items()}
@@ -272,7 +272,7 @@ class Library:
                 raise LibraryError("check_updates must be true or false")
             prefs[key] = value
         self.settings.home.mkdir(parents=True, exist_ok=True)
-        self._prefs_path.write_text(json.dumps(prefs, indent=2))
+        self._prefs_path.write_text(json.dumps(prefs, indent=2), encoding="utf-8")
         return prefs
 
     # ------------------------------------------------------------- imports

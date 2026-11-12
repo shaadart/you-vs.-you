@@ -182,7 +182,7 @@ class PlayApp:
             played.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
             path = played / f"{stamp}-{id(s):x}.pgn"
-            path.write_text(s.to_pgn())
+            path.write_text(s.to_pgn(), encoding="utf-8")
             self.saved_pgn = str(path)
             self.cache.commit()
 
