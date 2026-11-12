@@ -98,6 +98,8 @@ class StockfishEvaluator:
                 stderr=subprocess.DEVNULL,
                 text=True,
                 bufsize=1,
+                # Windows: no console window flashing up beside the app
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except OSError as exc:
             raise EngineError(f"cannot start {binary}: {exc}") from exc

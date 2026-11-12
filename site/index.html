@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>You vs. You</title>
+<meta name="description" content="Play chess against yourself. A free desktop app that learns how you play. Your games never leave your computer.">
+<style>
+:root { --bg:#F3F0E9; --ink:#191816; --ink-2:#4E4A44; --rule:#DCD6CA; --human:#8A5A12; --machine:#2747D9; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#111110; --ink:#ECE8E0; --ink-2:#B3AEA4; --rule:#2B2A27; --human:#E3AE52; --machine:#93A6FF; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 400 18px/1.6 Georgia, "Times New Roman", serif; }
+main { max-width: 38rem; margin: 0 auto; padding: 12vh 20px 10vh; }
+h1 { font-weight: 400; font-size: clamp(2.2rem, 7vw, 3.4rem); line-height: 1.1; margin: 0 0 .5em; }
+h1 em { color: var(--human); }
+p { color: var(--ink-2); margin: 0 0 1.2em; }
+.downloads { display: grid; gap: 10px; margin: 2.2em 0 1.2em; }
+.downloads a { display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  padding: 14px 18px; border: 1px solid var(--rule); color: var(--ink); text-decoration: none; }
+.downloads a:hover, .downloads a:focus-visible { border-color: var(--machine); outline: none; }
+.downloads small { font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; color: var(--ink-2); letter-spacing: .04em; }
+h2 { font-weight: 400; font-size: 1.1rem; margin: 2.4em 0 .4em; }
+ul { padding-left: 1.2em; color: var(--ink-2); margin: 0 0 1.2em; }
+a { color: var(--machine); }
+footer { margin-top: 3em; font: 12px/1.6 ui-monospace, Menlo, Consolas, monospace; color: var(--ink-2); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Play chess against <em>yourself</em>.</h1>
+  <p>It learns how you play from your own games, then sits across the board as you. Everything stays on your computer. No account, no server, nothing uploaded.</p>
+
+  <nav class="downloads" aria-label="Download">
+    <a href="https://github.com/shaadart/you-vs.-you/releases/latest/download/YouVsYou-windows-x64-setup.exe">Windows <small>.exe installer</small></a>
+    <a href="https://github.com/shaadart/you-vs.-you/releases/latest/download/YouVsYou-macos-arm64.dmg">macOS, Apple silicon <small>.dmg</small></a>
+    <a href="https://github.com/shaadart/you-vs.-you/releases/latest/download/YouVsYou-macos-x64.dmg">macOS, Intel <small>.dmg</small></a>
+    <a href="https://github.com/shaadart/you-vs.-you/releases/latest/download/YouVsYou-linux-x64.tar.gz">Linux <small>.tar.gz</small></a>
+  </nav>
+  <p>The first launch downloads the model and a move checker (about 120 MB) and checks them against fixed fingerprints. Then tell it your Chess.com or Lichess name, or give it a PGN file.</p>
+
+  <h2>Your system will warn you once</h2>
+  <ul>
+    <li><b>Windows:</b> "Windows protected your PC" → <i>More info</i> → <i>Run anyway</i>.</li>
+    <li><b>macOS:</b> open it once, then <i>System Settings → Privacy &amp; Security → Open Anyway</i>.</li>
+  </ul>
+  <p>The app isn't signed with a paid certificate yet. To check a download, compare it with <a href="https://github.com/shaadart/you-vs.-you/releases/latest">SHA256SUMS on the release page</a>.</p>
+
+  <footer>
+    Free software, AGPL-3.0 · <a href="https://github.com/shaadart/you-vs.-you">source</a> ·
+    plays with <a href="https://github.com/CSSLab/maia3">Maia-3</a> and <a href="https://stockfishchess.org">Stockfish</a>
+  </footer>
+</main>
+</body>
+</html>

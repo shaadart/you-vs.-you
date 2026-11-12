@@ -176,7 +176,12 @@ def test_jobs_run_one_at_a_time_and_surface_failures():
 
 def test_library_preferences_and_pgn_owner(tmp_path):
     library = make_library(tmp_path)
-    assert library.prefs() == {"speed": "lite", "workers": None, "temperature": None}
+    assert library.prefs() == {
+        "speed": "lite",
+        "workers": None,
+        "temperature": None,
+        "check_updates": True,
+    }
     assert library.set_prefs({"speed": "standard"})["speed"] == "standard"
     assert library.prefs()["speed"] == "standard"
     for bad in ({"speed": "warp"}, {"temperature": 9}, {"color": "red"}, {"workers": 0}):

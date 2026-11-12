@@ -28,9 +28,9 @@ def default_home(env: Mapping[str, str] = os.environ) -> Path:
 class Settings:
     home: Path
     stockfish_path: Path | None  # explicit override; otherwise the installed asset is used
-    torch_threads: int
+    model_threads: int
     lichess_token: str | None = None  # optional personal API token (higher rate limit)
-    live_threads: int = 1  # torch threads for live play: 1 is fastest at batch 1 (E2.1b)
+    live_threads: int = 1  # model threads for live play: 1 is fastest at batch 1 (E2.1b, torch era)
 
     @property
     def assets_dir(self) -> Path:
@@ -71,11 +71,11 @@ class Settings:
 def load_settings(home: str | Path | None = None, env: Mapping[str, str] = os.environ) -> Settings:
     home_path = Path(home or env.get("PCO_HOME") or default_home(env)).expanduser()
     sf = env.get("PCO_STOCKFISH")
-    threads = int(env.get("PCO_TORCH_THREADS", "0")) or min(4, os.cpu_count() or 1)
+    threads = int(env.get("PCO_MODEL_THREADS", "0")) or min(4, os.cpu_count() or 1)
     return Settings(
         home=home_path,
         stockfish_path=Path(sf).expanduser() if sf else None,
-        torch_threads=threads,
+        model_threads=threads,
         lichess_token=env.get("PCO_LICHESS_TOKEN") or None,
         live_threads=int(env.get("PCO_LIVE_THREADS", "1")),
     )

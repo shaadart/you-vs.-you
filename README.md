@@ -106,19 +106,35 @@ pieces are bundled, so nothing is loaded from the web.
 
 ## Start
 
-You need [uv](https://docs.astral.sh/uv/getting-started/installation/). It brings
-the right Python with it.
+Download the app for your computer from the
+[latest release](https://github.com/shaadart/you-vs.-you/releases/latest), or from
+[chess.madebyshaad.com](https://chess.madebyshaad.com).
 
-Clone this repository, then from inside it:
+| system | file |
+|---|---|
+| Windows | `YouVsYou-windows-x64-setup.exe` |
+| macOS, Apple silicon | `YouVsYou-macos-arm64.dmg` |
+| macOS, Intel | `YouVsYou-macos-x64.dmg` |
+| Linux | `YouVsYou-linux-x64.tar.gz` (unpack, run `YouVsYou/YouVsYou`) |
+
+The first time it opens, it downloads the model and a move checker, about 120 MB, and
+checks each against a fixed fingerprint. Then tell it your Chess.com or Lichess name, or
+give it a PGN file. That's the whole setup.
+
+The app isn't signed with a paid certificate yet, so your system will warn you once:
+
+- **Windows:** "Windows protected your PC" → *More info* → *Run anyway*.
+- **macOS:** open it once, then *System Settings → Privacy & Security → Open Anyway*.
+
+Each release lists `SHA256SUMS`, and the files carry GitHub build attestations
+(`gh attestation verify FILE --repo shaadart/you-vs.-you`).
+
+**From source** (needs [uv](https://docs.astral.sh/uv/getting-started/installation/)):
 
 ```sh
 uv sync
-uv run pco setup    # once: downloads the human-move model and Stockfish
-uv run pco play     # opens in your browser
+uv run pco app      # a window; or `uv run pco play` for your browser
 ```
-
-Then tell it your Chess.com or Lichess name, or give it a PGN file. That's the whole
-setup.
 
 ## How it works, without the jargon
 
@@ -153,10 +169,16 @@ Honestly:
 
 ## Your games stay yours
 
-Everything lives on your computer, in `~/.local/share/pco`. It goes online only when
-you ask it to: to read your *public* games from Chess.com or Lichess, and to
-download the model once. From Settings you can forget your Twin, or forget
-everything.
+Everything lives on your computer (Linux `~/.local/share/pco`, macOS
+`~/Library/Application Support/pco`, Windows `%LOCALAPPDATA%\pco`). It goes online
+only to read your *public* games from Chess.com or Lichess when you ask, to download the
+model and move checker once, and, unless you turn it off in Settings, to ask GitHub
+whether a newer version exists. Nothing about you is sent. There is no account and no
+server of ours. From Settings you can forget your Twin, or forget everything.
+
+The app's local server listens on `127.0.0.1` only, and only the app's own window can
+use it: the window signs in with a one-time link, and every other website or program on
+the machine is refused.
 
 ---
 
@@ -165,7 +187,8 @@ everything.
 
 | command | what it does |
 |---|---|
-| `pco play` | the app: play yourself, bring in games, rebuild, look back |
+| `pco app` | the desktop app: play yourself, bring in games, rebuild, look back |
+| `pco play` | the same app in your browser (prints a one-time sign-in link) |
 | `pco quickstart --chesscom U --lichess U --play` | everything in one go, from the terminal |
 | `pco setup` / `pco doctor` | download and check the model and Stockfish |
 | `pco import chesscom U` / `lichess U` / `pgn FILE --username U` | bring in games (safe to repeat) |
@@ -174,16 +197,18 @@ everything.
 | `pco games [--verify]` | what's stored, and a replay check of every game |
 
 Settings via environment: `PCO_HOME` (where data lives), `PCO_STOCKFISH` (your own
-Stockfish), `PCO_TORCH_THREADS`, `PCO_LIVE_THREADS`, `PCO_LICHESS_TOKEN`.
+Stockfish), `PCO_MODEL_THREADS`, `PCO_LIVE_THREADS`, `PCO_LICHESS_TOKEN`.
 
 </details>
 
 <details>
 <summary><b>If something goes wrong</b></summary>
 
-- **macOS or Windows:** install Stockfish (`brew install stockfish`, or the official
-  download) and set `PCO_STOCKFISH=/path/to/stockfish`. `pco doctor` will tell you
-  if it works. Only Linux has been tested so far.
+- **The app won't open, or something looks wrong:** the log is `logs/app.log` inside the
+  data directory above. Only one copy can run at a time.
+- **Your own Stockfish:** set `PCO_STOCKFISH=/path/to/stockfish`; `pco doctor` checks it.
+- **Tested so far:** Linux. The Windows and macOS builds are produced and self-tested by CI,
+  but have not been used by hand yet.
 - **A build or import was interrupted:** start it again. Finished work is kept.
 - **"analysis cache was unreadable":** it has already been set aside and rebuilt.
   Your games are untouched.
@@ -198,7 +223,15 @@ Stockfish), `PCO_TORCH_THREADS`, `PCO_LIVE_THREADS`, `PCO_LICHESS_TOKEN`.
 ```sh
 uv run pytest -q
 uv run ruff check . && uv run ruff format --check .
+node tests/js/ui_check.js src/pco/play/static/index.html
 ```
+
+Releasing: bump `version` in `pyproject.toml` and `src/pco/__init__.py`, then push a tag
+`vX.Y.Z`. `.github/workflows/release.yml` tests, freezes (PyInstaller, `packaging/`),
+self-tests each build, and publishes the installers with checksums. The Maia-3 weights are
+converted to ONNX by `scripts/export_onnx.py` (which checks the result against the original
+model) and hosted as the `models-v1` release asset; the site in `site/` is the download page
+(static, Cloudflare Pages).
 
 The design, from the two voices to every board's colors, is in
 [`docs/DESIGN.md`](docs/DESIGN.md). The original specification is
@@ -211,8 +244,9 @@ and the whole interface is one self-contained page: `src/pco/play/static/index.h
 <summary><b>Credits and licenses</b></summary>
 
 - You vs. You itself: GNU Affero General Public License v3.0 (AGPL-3.0-only).
-  Because You vs. You imports [Maia-3](https://github.com/CSSLab/maia3), it is a
-  derivative work and must be distributed under an AGPL-compatible license.
+  It ports the input encoding of [Maia-3](https://github.com/CSSLab/maia3) and ships its
+  weights converted to ONNX, so it is a derivative work and is distributed under the same
+  license. The source of every release is this repository, at the tag.
 - Maia-3 by CSSLab (AGPL-3.0).
 - [Stockfish](https://stockfishchess.org) (GPL-3.0), run as a separate program.
 - Chess pieces by Colin M.L. Burnett (GPLv2+, via lichess).
