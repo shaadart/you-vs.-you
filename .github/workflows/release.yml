@@ -49,16 +49,6 @@ jobs:
           if [ "$RUNNER_OS" = Linux ] && grep "Library not found" pyinstaller.log | grep -v "libtcl\|libtk"; then
             echo "::error::install the libraries above on the build machine"; exit 1
           fi
-      - name: Stockfish runs on this machine (macOS diagnostics)
-        if: runner.os == 'macOS'
-        run: |
-          set +e
-          uname -m; sysctl -n machdep.cpu.brand_string machdep.cpu.features machdep.cpu.leaf7_features
-          for SF in packaging/_bundled/assets/engines/stockfish-19/stockfish $(find dist/YouVsYou.app -name stockfish -type f); do
-            echo "== $SF"; file "$SF"; lipo -info "$SF"; codesign -dv "$SF" 2>&1 | head -3
-            printf 'uci\nisready\ngo nodes 1000\nquit\n' | "$SF" > sf.out 2>&1; echo "exit=$?"; tail -3 sf.out
-          done
-          exit 0
       - name: Self-test the frozen app (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

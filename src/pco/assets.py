@@ -109,6 +109,18 @@ def bundled_dir() -> Path | None:
     return base if base.is_dir() else None
 
 
+def bundled_archive(asset: Asset) -> Path | None:
+    """The asset's original release archive, shipped inside the app as plain data.
+
+    macOS builds ship Stockfish this way: its universal binary breaks when anything rewrites
+    it (thinning or code signing gives SIGBUS or exit 1 on Intel Macs), and the app bundle's
+    signing would rewrite it. Unpacked into the data home on first use, it stays untouched."""
+    if (bundled := bundled_dir()) is None:
+        return None
+    path = bundled / "archives" / asset.url.rsplit("/", 1)[-1]
+    return path if path.is_file() else None
+
+
 def asset_path(settings: Settings, asset: Asset) -> Path:
     """Where the asset is: inside the app if it was shipped there, else in the data home."""
     if (bundled := bundled_dir()) is not None and (inside := bundled / asset.relpath).exists():
@@ -172,13 +184,17 @@ def ensure_asset(
     if installed.exists():
         return _executable(installed) if asset.archive_member else installed
     target = settings.assets_dir / asset.relpath  # downloads always go to the data home
-    if offline:
+    local = bundled_archive(asset)
+    if offline and local is None:
         raise AssetError(f"{asset.name} is not installed at {target}; run `pco setup`.")
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=target.parent) as tmp:
         download = Path(tmp) / "download"
         try:
-            _download(asset.url, download, progress)
+            if local is not None:
+                shutil.copyfile(local, download)
+            else:
+                _download(asset.url, download, progress)
         except OSError as exc:
             raise AssetError(f"failed to download {asset.name} from {asset.url}: {exc}") from exc
         digest = sha256_file(download)
@@ -215,6 +231,8 @@ def stockfish_binary(settings: Settings, *, offline: bool = True) -> Path:
     asset = stockfish_asset()
     if asset and asset_path(settings, asset).exists():
         return _executable(asset_path(settings, asset))
+    if asset and bundled_archive(asset) is not None:  # unpack the copy shipped in the app
+        return ensure_asset(settings, asset, offline=True)
     found = shutil.which("stockfish")
     if found:
         return Path(found)
