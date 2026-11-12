@@ -606,6 +606,7 @@ def make_handler(
                 self._json(HTTPStatus.FORBIDDEN, {"error": "forbidden origin"})
                 return False
             if session is not None and not self._has_session():
+                log.info("refused %s %s: no session", self.command, self.path.split("?")[0])
                 if self.command == "GET" and self.path.split("?")[0] == "/":
                     self._send(HTTPStatus.FORBIDDEN, _LOCKED_PAGE, "text/html; charset=utf-8")
                 else:
@@ -621,6 +622,7 @@ def make_handler(
             """`/?t=<launch token>` once: set the session cookie and go to `/`."""
             given = (parse_qs(query).get("t") or [""])[0]
             if not (launch["open"] and hmac.compare_digest(given, launch["token"])):
+                log.info("refused a launch link that was already used or wrong")
                 self._json(HTTPStatus.FORBIDDEN, {"error": "this link was already used"})
                 return True
             launch["open"] = False
