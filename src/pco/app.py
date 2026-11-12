@@ -45,6 +45,41 @@ def _fail(text: str) -> int:
     return 1
 
 
+def _notice(text: str) -> None:
+    """Tell the user something when there may be no terminal: a small dialog if a display
+    exists, else the terminal."""
+    log.info(text)
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showinfo(TITLE, text)
+        root.destroy()
+    except Exception:
+        if sys.stderr is not None:
+            print(text, file=sys.stderr)
+
+
+def _port_file(home: Path) -> Path:
+    return home / "app.port"
+
+
+def _show_running_app(home: Path) -> None:
+    """A second launch: point the user at the copy that is already open."""
+    try:
+        port, mode = _port_file(home).read_text(encoding="utf-8").split()
+        int(port)
+    except (OSError, ValueError):
+        return _notice(f"{TITLE} is already open. Look for its window, or quit it first.")
+    if mode == "browser":  # same browser profile: its session cookie is still valid
+        webbrowser.open(f"http://127.0.0.1:{port}/")
+        _notice(f"{TITLE} is already open. Showing it in your browser.")
+    else:
+        _notice(f"{TITLE} is already open. Look for its window.")
+
+
 def _model_checks(app) -> dict[str, bool]:
     """The model runtime loads; and, when the model and engine are installed, they work."""
     import chess
@@ -113,12 +148,22 @@ def _wait_in_browser(url: str, fresh_url) -> None:
         return
     root.title(TITLE)
     root.resizable(False, False)
+    root.attributes("-topmost", True)  # easy to find; it is the app's only visible part
+    root.after(1500, lambda: root.attributes("-topmost", False))
     tk.Label(root, text=f"{TITLE} is running.", padx=28, pady=14).pack()
     row = tk.Frame(root, padx=20, pady=12)
     row.pack()
     tk.Button(row, text="Open", command=lambda: webbrowser.open(fresh_url())).pack(side="left")
     tk.Button(row, text="Quit", command=root.destroy).pack(side="left", padx=8)
     root.mainloop()
+
+
+def _has_native_window() -> bool:
+    try:
+        import webview  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
 def _window(url: str, fresh_url, home: Path) -> None:
@@ -139,8 +184,9 @@ def run(settings: Settings, *, port: int = 8765, window: bool = True, test: bool
     lock = InstanceLock(settings.home / "app.lock")
     try:
         lock.acquire()
-    except AlreadyRunning as exc:
-        return _fail(str(exc))
+    except AlreadyRunning:
+        _show_running_app(settings.home)
+        return 1
     setup_logging(settings.home)
     try:
         app, close = open_app(settings, check_updates=not test)
@@ -155,6 +201,8 @@ def run(settings: Settings, *, port: int = 8765, window: bool = True, test: bool
         lock.release()
         return _fail(f"cannot listen on 127.0.0.1: {exc}")
     port = server.server_address[1]
+    mode = "window" if window and _has_native_window() else "browser"
+    _port_file(settings.home).write_text(f"{port} {mode}", encoding="utf-8")
     threading.Thread(target=server.serve_forever, name="pco-http", daemon=True).start()
 
     def fresh_url() -> str:
@@ -178,6 +226,7 @@ def run(settings: Settings, *, port: int = 8765, window: bool = True, test: bool
         server.server_close()
         app.close()
         close()
+        _port_file(settings.home).unlink(missing_ok=True)
         lock.release()
 
 

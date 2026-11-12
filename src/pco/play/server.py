@@ -531,6 +531,14 @@ def _page() -> bytes:
     return files("pco.play").joinpath("static/index.html").read_bytes()
 
 
+_LOCKED_PAGE = (
+    b"<!doctype html><meta charset=utf-8><title>You vs. You</title>"
+    b"<body style='font:18px/1.6 Georgia,serif;max-width:32em;margin:18vh auto;padding:0 20px'>"
+    b"<h1 style='font-weight:400'>This page needs the app.</h1>"
+    b"<p>You vs. You opens through its own window. Use the <b>Open</b> button in the app's "
+    b"small window, or start the app again.</p>"
+)
+
 _INLINE_SCRIPT = re.compile(rb"<script(?:\s[^>]*)?>(.*?)</script>", re.S)
 
 
@@ -597,7 +605,10 @@ def make_handler(
                 self._json(HTTPStatus.FORBIDDEN, {"error": "forbidden origin"})
                 return False
             if session is not None and not self._has_session():
-                self._json(HTTPStatus.FORBIDDEN, {"error": "open the app from its window"})
+                if self.command == "GET" and self.path.split("?")[0] == "/":
+                    self._send(HTTPStatus.FORBIDDEN, _LOCKED_PAGE, "text/html; charset=utf-8")
+                else:
+                    self._json(HTTPStatus.FORBIDDEN, {"error": "open the app from its window"})
                 return False
             return True
 

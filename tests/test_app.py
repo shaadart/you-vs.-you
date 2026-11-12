@@ -333,3 +333,12 @@ def test_vendored_encoding_is_side_to_move_relative():
     assert mirrored.sum() == 32
     assert mirrored[chess.E2, 0] == 1  # the mover's own e-pawn, at home, as "white"
     assert mirrored[chess.E5, 6] == 1  # the opponent's pawn on e4, seen from the other side
+
+
+def test_a_browser_without_the_session_gets_a_human_page(secured):
+    srv, _ = secured
+    resp, body = Client(srv).call("GET", "/")
+    assert resp.status == 403 and resp.getheader("Content-Type").startswith("text/html")
+    assert b"needs the app" in body
+    resp, body = Client(srv).call("GET", "/api/home")
+    assert resp.status == 403 and resp.getheader("Content-Type").startswith("application/json")
