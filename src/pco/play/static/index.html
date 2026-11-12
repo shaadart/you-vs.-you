@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>You vs. You</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Cstyle%3E.p%7Bfill:%23191917%7D.r%7Bfill:%232d55d4%7D@media(prefers-color-scheme:dark)%7B.p%7Bfill:%23ecebe4%7D.r%7Bfill:%238da6ff%7D%7D%3C/style%3E%3Cpath class='p' d='M60 12C54.2 12 50.5 16.2 50.5 21.5C50.5 25.8 53.2 29.6 55.5 31.4L55 33L40 33L39 34.2L40.2 36.2C45.5 37.8 49.5 39 51 40.5C50.2 56 45.5 73 37 87L34 87L34 96L30 96L30 108L90 108L90 96L86 96L86 87L81 87L81 78L78 78L78 69L75 69L75 60L72 60L72 48L69 48L69 39L81 39L81 33L66 33L66 30L69 30L69 27L72 27L72 18L69 18L69 15L66 15L66 12Z'/%3E%3Cpath class='r' d='M66 15h3v3h-3zM69 18h3v9h-3zM66 27h3v3h-3zM78 33h3v6h-3zM69 39h12v3H69zM69 48h3v12h-3zM72 60h3v9h-3zM75 69h3v9h-3zM78 78h3v9h-3zM83 87h3v9h-3zM87 96h3v12h-3z'/%3E%3C/svg%3E">
 <script id="prefs">try { const d = document.documentElement, t = localStorage.getItem("pco.theme"),
   b = localStorage.getItem("pco.board"); if (["light", "dark", "blue", "pink"].includes(t)) d.dataset.theme = t;
   if (b && b !== "paper") d.dataset.board = b; } catch (e) { /* storage unavailable */ }</script>
@@ -109,7 +110,9 @@ a { text-decoration: none; }
 .top { height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 16px;
   padding: 0 max(28px, env(safe-area-inset-left)); border-bottom: 1px solid var(--rule); }
 .brand { display: flex; align-items: center; gap: 10px; }
-.brand .sq { width: 8px; height: 8px; background: var(--machine); }
+.brand .mark { width: 20px; height: 20px; display: block; flex: none; }
+.brand .mark .pawn { fill: var(--ink); }
+.brand .mark .relief { fill: var(--machine); }
 .brand .word { font: 500 14px var(--mono); letter-spacing: .02em; white-space: nowrap; }
 .brand .twin-you { font: 500 15px var(--pixel); letter-spacing: -.03em; }  /* the second you: your Twin */
 .nav { display: flex; gap: 2px; }
@@ -432,7 +435,7 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
 </defs></svg>
 
 <header class="top">
-  <a class="brand" href="#/" aria-label="You vs. You, home"><span class="sq" aria-hidden="true"></span><span class="word">you vs. <span class="twin-you">you</span></span></a>
+  <a class="brand" href="#/" aria-label="You vs. You, home"><svg class="mark" viewBox="0 0 120 120" aria-hidden="true"><path class="pawn" d="M60 12C54.2 12 50.5 16.2 50.5 21.5C50.5 25.8 53.2 29.6 55.5 31.4L55 33L40 33L39 34.2L40.2 36.2C45.5 37.8 49.5 39 51 40.5C50.2 56 45.5 73 37 87L34 87L34 96L30 96L30 108L90 108L90 96L86 96L86 87L81 87L81 78L78 78L78 69L75 69L75 60L72 60L72 48L69 48L69 39L81 39L81 33L66 33L66 30L69 30L69 27L72 27L72 18L69 18L69 15L66 15L66 12Z"/><path class="relief" d="M66 15h3v3h-3zM69 18h3v9h-3zM66 27h3v3h-3zM78 33h3v6h-3zM69 39h12v3H69zM69 48h3v12h-3zM72 60h3v9h-3zM75 69h3v9h-3zM78 78h3v9h-3zM83 87h3v9h-3zM87 96h3v12h-3z"/></svg><span class="word">you vs. <span class="twin-you">you</span></span></a>
   <a id="job-pill" class="pill" href="#/build" hidden><span class="pulse" aria-hidden="true"></span><span id="job-pill-text"></span></a>
   <nav class="nav" aria-label="Destinations">
     <a href="#/" data-nav="play">Play</a>
