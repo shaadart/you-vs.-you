@@ -17,7 +17,7 @@ def maia3_prior(installed_settings):
         pytest.skip("Maia-3 weights not installed (run `pco setup`)")
     from pco.priors.maia3 import Maia3Prior
 
-    return Maia3Prior(path, threads=installed_settings.torch_threads)
+    return Maia3Prior(path, threads=installed_settings.model_threads)
 
 
 @pytest.fixture(scope="session")

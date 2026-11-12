@@ -159,7 +159,9 @@ def test_profile_roundtrip_and_version_guards(trained):
     bad = path.with_name("profile-99999999T000000Z.json")
     from pco.personal.features import PERSONAL_FEATURE_VERSION as V
 
-    bad.write_text(path.read_text().replace(f'"feature_version": {V}', '"feature_version": 0'))
+    bad.write_text(
+        path.read_text(encoding="utf-8").replace(f'"feature_version": {V}', '"feature_version": 0')
+    )
     with pytest.raises(ValueError, match="retrain"):
         PersonalProfile.latest(root, "Me")
     bad.unlink()

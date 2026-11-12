@@ -79,12 +79,12 @@ class PersonalProfile:
         directory.mkdir(parents=True, exist_ok=True)
         stamp = self.created_at.replace(":", "").replace("-", "")
         path = directory / f"profile-{stamp}.json"
-        path.write_text(json.dumps(asdict(self)))
+        path.write_text(json.dumps(asdict(self)), encoding="utf-8")
         return path
 
     @classmethod
     def load(cls, path: Path) -> PersonalProfile:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         if data.get("profile_format") != PROFILE_FORMAT:
             raise ValueError(f"{path}: unsupported profile format {data.get('profile_format')}")
         stale = (

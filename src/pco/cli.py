@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import random
 import sqlite3
 import sys
 import time
@@ -89,7 +88,7 @@ def cmd_doctor(settings: Settings) -> int:
     try:
         t = time.perf_counter()
         prior = Maia3Prior(
-            ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.torch_threads
+            ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.model_threads
         )
         load = time.perf_counter() - t
         t = time.perf_counter()
@@ -193,47 +192,32 @@ def cmd_games(settings: Settings, verify: bool = False) -> int:
 
 
 def cmd_play(settings: Settings, args: argparse.Namespace) -> int:
-    """The interface: play your Twin, bring in games, rebuild, look back (docs/DESIGN.md)."""
+    """The interface in your browser (the desktop app is `pco app`; docs/DESIGN.md)."""
+    import secrets
     import webbrowser
 
-    from pco.analysis.stockfish import StockfishEvaluator
-    from pco.decisions.cache import AnalysisCache
-    from pco.play.library import Library, LibraryError, real_trainer
-    from pco.play.server import PlayApp, make_server
-    from pco.priors.maia3 import Maia3Prior
+    from pco.play.boot import open_app
+    from pco.play.library import LibraryError
+    from pco.play.logs import setup_logging
+    from pco.play.server import make_server
 
-    prior = Maia3Prior(
-        ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.live_threads
-    )
-    evaluator = StockfishEvaluator(stockfish_binary(settings))
-    # Live play must not stall on another pco process holding the cache: best-effort writes
-    cache = AnalysisCache(settings.analysis_cache_path, busy_timeout=0.1, best_effort=True)
-
-    def close() -> None:
-        evaluator.close()
-        cache.close()
-
-    library = Library(settings, UrllibHttp(), real_trainer(settings))
+    setup_logging(settings.home)
     try:
-        app = PlayApp(
-            library,
-            prior,
-            evaluator,
-            cache,
-            player=args.player,
-            rng=random.Random(args.seed),
-            temperature=args.temperature,
+        app, close = open_app(
+            settings, player=args.player, seed=args.seed, temperature=args.temperature
         )
-        server = make_server(app, args.port)
     except LibraryError as exc:
         print(f"error: {exc} (see `pco games`)", file=sys.stderr)
-        close()
         return 1
+    token = secrets.token_urlsafe(24)
+    try:
+        server = make_server(app, args.port, token)
     except OSError as exc:
         print(f"error: cannot listen on 127.0.0.1:{args.port}: {exc}", file=sys.stderr)
+        app.close()
         close()
         return 1
-    url = f"http://127.0.0.1:{server.server_address[1]}/"
+    link = f"http://127.0.0.1:{server.server_address[1]}/?t={token}"
     who = app.twin.player
     if who is None:
         what = "no games yet: the page will ask for them"
@@ -241,10 +225,11 @@ def cmd_play(settings: Settings, args: argparse.Namespace) -> int:
         what = f"{who}, Twin built {app.twin.profile.created_at}"
     else:
         what = f"{who}, no Twin yet: the page can build one"
-    print(f"pco play: {url}  ({what})")
+    print(f"pco play: {what}")
+    print(f"Open this link once (it signs this browser in): {link}")
     print("Ctrl-C to stop.", flush=True)
     if not args.no_browser:
-        webbrowser.open(url)
+        webbrowser.open(link)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -254,6 +239,13 @@ def cmd_play(settings: Settings, args: argparse.Namespace) -> int:
         app.close()
         close()
     return 0
+
+
+def cmd_app(settings: Settings, args: argparse.Namespace) -> int:
+    """The desktop app: a native window around the same server."""
+    from pco.app import run
+
+    return run(settings, port=args.port, window=not args.no_window, test=args.self_test)
 
 
 def cmd_train(settings: Settings, args: argparse.Namespace) -> int:
@@ -267,7 +259,7 @@ def cmd_train(settings: Settings, args: argparse.Namespace) -> int:
         print(f"error: no player named {args.player!r} (see `pco games`)", file=sys.stderr)
         return 1
     prior = Maia3Prior(
-        ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.torch_threads
+        ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.model_threads
     )
     sf_path = stockfish_binary(settings)
     workers = args.workers or max(1, min(4, (os.cpu_count() or 2) - 2))
@@ -428,7 +420,7 @@ def cmd_build(settings: Settings, args: argparse.Namespace) -> int:
         best_nodes=args.best_nodes or base_cfg.best_nodes,
     )
     prior = Maia3Prior(
-        ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.torch_threads
+        ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.model_threads
     )
     sf_path = stockfish_binary(settings)
     workers = args.workers or max(1, min(4, (os.cpu_count() or 2) - 2))
@@ -466,7 +458,7 @@ def cmd_build(settings: Settings, args: argparse.Namespace) -> int:
         f"engine {cache.hits['engine']}/{cache.misses['engine']}"
     )
     if args.export:
-        with open(args.export, "w") as f:
+        with open(args.export, "w", encoding="utf-8") as f:
             for a in analyses:
                 f.write(json.dumps(episode_record(a)) + "\n")
         print(f"  exported {n} records to {args.export}")
@@ -492,7 +484,7 @@ def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
         seed=args.seed,
     )
     prior = Maia3Prior(
-        ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.torch_threads
+        ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.model_threads
     )
     sf_path = stockfish_binary(settings)
     workers = args.workers or max(1, min(4, (os.cpu_count() or 2) - 2))
@@ -525,7 +517,7 @@ def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
         )
     )
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(report, indent=1))
+    out.write_text(json.dumps(report, indent=1), encoding="utf-8")
     print(format_report(report))
     print(f"\nreport: {out}")
     return 0
@@ -552,6 +544,10 @@ def main(argv: list[str] | None = None, http: Http | None = None) -> int:
     play.add_argument("--seed", type=int, help="random seed for reproducible sampling")
     play.add_argument("--no-browser", action="store_true", help="do not open a browser")
     play.add_argument("--player", help="whose Twin (default: the one built most recently)")
+    app = sub.add_parser("app", help="open the desktop app (a window, no browser)")
+    app.add_argument("--port", type=int, default=8765, help="preferred port (0 = any free)")
+    app.add_argument("--no-window", action="store_true", help="serve only; print the link")
+    app.add_argument("--self-test", action="store_true", help="start, check, and exit")
     qs = sub.add_parser("quickstart", help="one command: import your games, train, play")
     qs.add_argument("--chesscom", help="your Chess.com username")
     qs.add_argument("--lichess", help="your Lichess username")
@@ -638,6 +634,8 @@ def main(argv: list[str] | None = None, http: Http | None = None) -> int:
             return cmd_build(settings, args)
         if args.command == "eval":
             return cmd_eval(settings, args)
+        if args.command == "app":
+            return cmd_app(settings, args)
         if args.command == "train":
             return cmd_train(settings, args)
         if args.command == "quickstart":

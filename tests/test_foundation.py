@@ -15,11 +15,11 @@ from pco.priors.maia3 import history_boards
 
 
 def test_settings_resolution_order(tmp_path):
-    env = {"PCO_HOME": str(tmp_path / "envhome"), "PCO_TORCH_THREADS": "2"}
+    env = {"PCO_HOME": str(tmp_path / "envhome"), "PCO_MODEL_THREADS": "2"}
     assert load_settings(env=env).home == tmp_path / "envhome"
     assert load_settings(tmp_path / "arg", env=env).home == tmp_path / "arg"
     s = load_settings(env=env)
-    assert s.torch_threads == 2
+    assert s.model_threads == 2
     assert s.db_path.parent == s.assets_dir.parent == s.home
 
 

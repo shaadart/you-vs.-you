@@ -1,25 +1,28 @@
-"""Maia-3 human-move prior (CSSLab, AGPL-3.0), run in-process on CPU.
+"""Maia-3 human-move prior (CSSLab, AGPL-3.0), run in-process on CPU with onnxruntime.
 
-Uses the upstream `maia3` package for tokenization and the model definition so the
-input encoding cannot drift from what the checkpoint was trained on.
+The weights are the released `maia3-5m` checkpoint exported to ONNX by
+`scripts/export_onnx.py`, which also checks the export against the torch reference.
+The input encoding is vendored in `maia3_tokens` so it cannot drift from the checkpoint.
 """
 
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Sequence
 from pathlib import Path
-from types import SimpleNamespace
 
 import chess
-import torch
-from maia3.dataset import get_historical_tokens, get_legal_moves_mask, tokenize_board
-from maia3.model_registry import apply_model_config, resolve_model_spec
-from maia3.models import MAIA3Model
-from maia3.utils import get_all_possible_moves, mirror_move
+import numpy as np
+import onnxruntime as ort
 
 from pco.assets import sha256_file
 from pco.priors.base import MoveDistribution, PriorError, PriorRequest
+from pco.priors.maia3_tokens import (
+    all_moves,
+    historical_tokens,
+    legal_mask,
+    mirror_move,
+    tokenize_board,
+)
 
 HISTORY = 8  # positions per input, fixed by the released checkpoints
 
@@ -36,28 +39,21 @@ def history_boards(board: chess.Board, limit: int = HISTORY) -> list[chess.Board
 
 
 class Maia3Prior:
-    def __init__(self, checkpoint: Path, model_name: str = "maia3-5m", threads: int | None = None):
+    def __init__(self, model: Path, model_name: str = "maia3-5m", threads: int | None = None):
+        opts = ort.SessionOptions()
         if threads:
-            torch.set_num_threads(threads)
-        spec = resolve_model_spec(model_name)
-        self.cfg = SimpleNamespace(
-            history=HISTORY, use_padding=False, include_time_info=False, device="cpu"
-        )
-        apply_model_config(self.cfg, spec)
-        # Identity = architecture + weight checksum, so caches keyed on it never mix versions.
-        self.model_id = f"{spec.name}@{sha256_file(checkpoint)[:12]}"
-        state = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        state = state.get("model_state_dict", state)
-        state = {k.replace("smolgen", "gab"): v for k, v in state.items()}
-        self.model = MAIA3Model(self.cfg)
-        missing, unexpected = self.model.load_state_dict(state, strict=False)
-        if missing or unexpected:
-            raise PriorError(
-                f"checkpoint does not match {spec.name}: missing={missing[:3]} "
-                f"unexpected={unexpected[:3]}"
+            opts.intra_op_num_threads = threads
+            opts.inter_op_num_threads = 1
+        opts.log_severity_level = 3
+        try:
+            self.session = ort.InferenceSession(
+                str(model), opts, providers=["CPUExecutionProvider"]
             )
-        self.model.eval()
-        self.vocab = get_all_possible_moves()
+        except Exception as exc:  # corrupt or wrong file: say which one
+            raise PriorError(f"cannot load {model}: {exc}") from exc
+        # Identity = architecture + weight checksum, so caches keyed on it never mix versions.
+        self.model_id = f"{model_name}-onnx@{sha256_file(model)[:12]}"
+        self.vocab = all_moves()
         self.index = {m: i for i, m in enumerate(self.vocab)}
 
     def input_key(self, req: PriorRequest) -> str:
@@ -70,27 +66,33 @@ class Maia3Prior:
         moves = []
         while len(moves) < HISTORY - 1 and b.move_stack:
             moves.append(b.pop().uci())
-        return f"k2|{b.fen()}|{','.join(reversed(moves))}|{req.self_elo}|{req.oppo_elo}"
+        return f"k3|{b.fen()}|{','.join(reversed(moves))}|{req.self_elo}|{req.oppo_elo}"
 
-    def _encode(self, req: PriorRequest) -> torch.Tensor:
-        tokens = deque(tokenize_board(b) for b in history_boards(req.board))
-        return get_historical_tokens(tokens, self.cfg, 0.0, 0.0, 0.0, 0.0)
+    def _encode(self, req: PriorRequest) -> np.ndarray:
+        return historical_tokens([tokenize_board(b) for b in history_boards(req.board)], HISTORY)
 
-    @torch.no_grad()
+    def logits(self, requests: Sequence[PriorRequest]) -> np.ndarray:
+        """Raw (batch, 4352) move logits, before masking."""
+        tokens = np.stack([self._encode(r) for r in requests]).astype(np.float32)
+        self_elo = np.array([r.self_elo for r in requests], dtype=np.int64)
+        oppo_elo = np.array([r.oppo_elo for r in requests], dtype=np.int64)
+        (out,) = self.session.run(
+            ["logits"], {"tokens": tokens, "self_elo": self_elo, "oppo_elo": oppo_elo}
+        )
+        return out
+
     def predict(self, requests: Sequence[PriorRequest]) -> list[MoveDistribution]:
         if not requests:
             return []
         masks = []
         for req in requests:
-            mask = get_legal_moves_mask(req.board, self.index)
-            if not bool(mask.any()):
+            mask = legal_mask(req.board, self.index)
+            if not mask.any():
                 raise PriorError(f"no legal moves in position {req.board.fen()}")
             masks.append(mask)
-        tokens = torch.stack([self._encode(r) for r in requests])
-        self_elo = torch.tensor([r.self_elo for r in requests], dtype=torch.long)
-        oppo_elo = torch.tensor([r.oppo_elo for r in requests], dtype=torch.long)
-        logits, _value, _ = self.model(tokens, self_elo, oppo_elo)
-        logp = logits.float().masked_fill(~torch.stack(masks), float("-inf")).log_softmax(-1)
+        logits = np.where(np.stack(masks), self.logits(requests).astype(np.float64), -np.inf)
+        peak = logits.max(axis=-1, keepdims=True)
+        logp = logits - peak - np.log(np.exp(logits - peak).sum(axis=-1, keepdims=True))
 
         out = []
         for row, req in zip(logp, requests, strict=True):
@@ -98,6 +100,6 @@ class Maia3Prior:
             dist = {}
             for move in req.board.legal_moves:
                 uci = move.uci()
-                dist[uci] = row[self.index[mirror_move(uci) if black else uci]].item()
+                dist[uci] = float(row[self.index[mirror_move(uci) if black else uci]])
             out.append(MoveDistribution(self.model_id, dist))
         return out

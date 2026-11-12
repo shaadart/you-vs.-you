@@ -365,6 +365,8 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
 .field .file input { display: none; }
 .eta { margin: 30px 0 0; font: 400 22px/30px var(--serif); }
 .eta + .machine { margin-top: 4px; }
+.setup-bar { margin: 28px 0 0; height: 2px; max-width: 34em; background: var(--rule); }
+.setup-bar > i { display: block; height: 100%; width: 0; background: var(--machine); transition: width .4s ease; }
 .first-note { margin: 18px 0 0; font: italic 400 16px/24px var(--serif); color: var(--ink-3); max-width: 34em; }
 .stages { list-style: none; margin: 40px 0 0; padding: 0; font: 500 clamp(15px, 2.2vw, 20px)/1.9 var(--mono); letter-spacing: .14em; }
 .stages li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 18px; color: var(--ink-3); transition: color .6s, opacity .6s; }
@@ -445,6 +447,7 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
     <div>
       <h1 class="headline" id="home-question">What do you want to do with yourself?</h1>
       <p id="home-job" class="status-line" hidden></p>
+      <p id="home-update" class="status-line" hidden></p>
       <div class="actions">
         <button id="home-play" class="cta">Play yourself</button>
         <button id="home-resume" class="quiet" hidden>Return to your game</button>
@@ -648,7 +651,8 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
     </section>
     <section>
       <p class="label">Privacy</p>
-      <p class="body">Everything stays on your device. Chess.com and Lichess are contacted only when you add a source or look for new games, and only to read your public games.</p>
+      <p class="body">Everything stays on your device. Chess.com and Lichess are contacted only when you add a source or look for new games, and only to read your public games. The model and a move checker (Stockfish) are downloaded once, from GitHub. The app can also ask GitHub whether a newer version exists; that sends nothing about you.</p>
+      <div class="row"><span class="body">Check for new versions</span><div class="seg" id="set-updates"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
       <p id="set-home" class="machine" style="margin-top:10px"></p>
     </section>
     <section>
@@ -709,6 +713,16 @@ input[type=range] { width: min(100%, 320px); accent-color: var(--machine); }
     <div id="build-done" class="actions" style="margin-top:36px" hidden><button class="cta" data-go="meet">Meet yourself</button></div>
     <div id="build-failed" hidden><p id="build-error" class="machine" style="color:var(--check)"></p>
       <div class="actions" style="margin-top:20px"><button class="quiet" data-go="">Back</button></div></div>
+  </section>
+
+  <!-- SETUP: the first run fetches the model and the engine -->
+  <section id="s-setup" class="screen column" hidden>
+    <h1 id="setup-head" class="headline"></h1>
+    <p id="setup-sub" class="lede"></p>
+    <div id="setup-bar" class="setup-bar" hidden><i id="setup-fill"></i></div>
+    <p id="setup-detail" class="machine" aria-live="polite"></p>
+    <p id="setup-error" class="machine" style="color:var(--check)"></p>
+    <div class="actions" style="margin-top:32px"><button id="setup-go" class="cta"></button></div>
   </section>
 </main>
 
@@ -879,9 +893,9 @@ const sleep = ms => new Promise(res => setTimeout(res, ms));
 const paceFor = c => Math.min(1000, 250 + 750 * (1 - c.probability));
 
 /* ------------------------------------------------------------ router */
-const SCREENS = ["home", "meet", "game", "reflection", "review", "twin", "settings", "import", "build"];
+const SCREENS = ["home", "meet", "game", "reflection", "review", "twin", "settings", "import", "build", "setup"];
 const NAV = { home: "play", meet: "play", game: "play", reflection: "play", review: "play",
-  twin: "style", settings: "settings", import: "settings", build: "settings" };
+  twin: "style", settings: "settings", import: "settings", build: "settings", setup: "" };
 const ALIASES = { style: "twin" };  // "Your style" is the portrait; old #/archive links land on the home
 function parseRoute() {
   const h = (window.location && window.location.hash) || "";
@@ -895,6 +909,8 @@ function go(name, param) {
   else show(name || "home", param || null);
 }
 function show(name, param) {
+  // Nothing plays until the model and the engine are on this machine.
+  if (home && home.setup && !home.setup.ready && !["setup", "settings"].includes(name)) name = "setup";
   ui.route = name; ui.param = param;
   for (const s of SCREENS) $("s-" + s).hidden = s !== name;
   for (const a of document.querySelectorAll("[data-nav]"))
@@ -1322,6 +1338,7 @@ const ENTER = {
   },
   import() { renderImport(); },
   build() { pollJob(); },
+  setup() { renderSetup(); pollJob(); },
 };
 
 /* meet: YOU ↓ YOU ↓ PLAY */
@@ -1363,6 +1380,15 @@ $("home-play").addEventListener("click", async () => {
 });
 function renderHome() {
   const h = home, running = jobRunning();
+  const upd = $("home-update");
+  upd.hidden = !h.update;
+  if (h.update) {
+    upd.replaceChildren(document.createTextNode(`Version ${h.update.version} is out. `));
+    const a = document.createElement("button");
+    a.className = "quiet"; a.textContent = "See what's new";
+    a.addEventListener("click", () => request("/api/open-update", {}));
+    upd.append(a);
+  }
   const first = !h.games, built = h.has_twin;
   $("home-question").textContent = first ? "Play against yourself."
     : built ? "What do you want to do with yourself?" : "Your games are here. Your Twin isn't, yet.";
@@ -1644,6 +1670,7 @@ function seg(container, value, key) {
   for (const b of container.children) b.setAttribute("aria-pressed", String(b.dataset[key] === String(value)));
 }
 function renderSettings(s) {
+  seg($("set-updates"), s.prefs.check_updates === false ? "off" : "on", "v");
   $("set-accounts").replaceChildren(...(s.accounts.length ? s.accounts : [null]).map(a => {
     const p = document.createElement("p"); p.className = "row";
     if (!a) { p.innerHTML = `<span class="body">No accounts yet.</span>`; return p; }
@@ -1704,6 +1731,7 @@ async function saveSettings(change) {
   else ENTER.settings();
 }
 for (const b of $("set-depth").children) b.addEventListener("click", () => saveSettings({ speed: b.dataset.speed }));
+for (const b of $("set-updates").children) b.addEventListener("click", () => saveSettings({ check_updates: b.dataset.v === "on" }));
 const THEMES = ["light", "dark", "blue", "pink"];
 const ROOM_BOARD = { pink: "blush", blue: "terminal" };  // a room's own board, when you're still on Paper
 function applyAppearance() {
@@ -1869,7 +1897,7 @@ function renderJob(job) {
 function renderPill() {
   const job = ui.job, pill = $("job-pill"), running = jobRunning();
   const ended = job && job.status !== "running" && !ui.jobAcknowledged;
-  pill.hidden = ui.route === "build" || !(running || ended);
+  pill.hidden = ui.route === "build" || ui.route === "setup" || !(running || ended) || job.kind === "setup";
   if (pill.hidden) return;
   pill.classList.toggle("ready", !running);
   pill.href = running || job.status === "failed" ? "#/build" : "#/meet";
@@ -1877,6 +1905,29 @@ function renderPill() {
     ? `<span class="long">${esc(job.stage === "STARTING" ? "STARTING" : job.stage)} · </span>${job.eta == null ? "WORKING" : about(job.eta)}`
     : job.status === "failed" ? "SOMETHING STOPPED" : job.result && job.result.built ? "YOUR TWIN IS READY" : "UP TO DATE";
 }
+function renderSetup() {
+  const s = (home && home.setup) || { ready: true, missing: [], problem: null };
+  const job = ui.job && ui.job.kind === "setup" ? ui.job : null;
+  const running = !!job && job.status === "running", failed = !!job && job.status === "failed";
+  $("setup-head").textContent = s.problem ? "This system needs one more thing."
+    : running ? "Getting ready." : "One quick download.";
+  $("setup-sub").textContent = s.problem
+    || (running ? "Stay here or come back later. It keeps going while the app is open."
+      : "The first time, the app fetches the model that plays the way people do, and a move checker (Stockfish): about 120 MB, each checked against a fixed fingerprint and kept only on this machine.");
+  const pct = running && job.fraction != null ? Math.round(job.fraction * 100) : 0;
+  $("setup-bar").hidden = !running;
+  $("setup-fill").style.width = pct + "%";
+  $("setup-detail").textContent = running ? (job.fragments[job.fragments.length - 1] || "") : "";
+  $("setup-error").textContent = failed ? job.error : "";
+  $("setup-go").hidden = running || !!s.problem;
+  $("setup-go").textContent = failed ? "Try again" : "Download";
+}
+$("setup-go").addEventListener("click", async () => {
+  const r = await request("/api/setup", {});
+  if (r.ok) { ui.job = r.data.job; pollJob(); }
+  else $("setup-error").textContent = r.data.error;
+  renderSetup();
+});
 async function pollJob() {
   clearTimeout(ui.jobTimer);
   const r = await request("/api/job");
@@ -1885,12 +1936,14 @@ async function pollJob() {
   ui.job = job;
   if (!job) { renderPill(); if (ui.route === "build") go(""); return; }
   if (ui.route === "build") { renderJob(job); if (job.status !== "running") ui.jobAcknowledged = true; }
+  if (ui.route === "setup") renderSetup();
   if (ui.route === "home" && home) renderHomeJob();
   if (ui.route === "settings") renderSettingsJob();
   renderPill();
-  if (job.status === "running") ui.jobTimer = setTimeout(pollJob, ui.route === "build" ? 800 : 2500);
+  if (job.status === "running") ui.jobTimer = setTimeout(pollJob, ui.route === "build" || ui.route === "setup" ? 800 : 2500);
   else if (wasRunning) {
     reflection = null; await loadHome();
+    if (ui.route === "setup" && home && home.setup.ready) go("");
     if (ui.route === "home") renderHome();
     if (ui.route === "settings") ENTER.settings();
   }

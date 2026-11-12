@@ -241,7 +241,7 @@ def test_real_build_is_reproducible_from_scratch(conn, maia3_prior, stockfish_pa
     first = build(tmp_path / "a.sqlite3", 1)
     second = build(tmp_path / "b.sqlite3", 2)  # fresh cache, different parallelism
     assert first == second
-    assert all(r["prior_model"].startswith("maia3-5m@") for r in first)
+    assert all(r["prior_model"].startswith("maia3-5m-onnx@") for r in first)
     assert AnalysisLimit(cfg.nodes).nodes == 3_000
 
 

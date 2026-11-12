@@ -22,3 +22,7 @@ code-review-findings.md
 
 # Local AI session contexts (not staged)
 AI_CONTEXTS/
+
+# Release build output
+installer/
+build/

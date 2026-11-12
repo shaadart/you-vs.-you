@@ -40,11 +40,11 @@ class FakeHttp:
 
     def get_json(self, url, headers=None):
         self.calls.append((url, headers))
-        return json.loads(self._find(url).read_text())
+        return json.loads(self._find(url).read_text(encoding="utf-8"))
 
     def get_lines(self, url, headers=None):
         self.calls.append((url, headers))
-        yield from self._find(url).read_text().splitlines()
+        yield from self._find(url).read_text(encoding="utf-8").splitlines()
 
 
 CHESSCOM_ROUTES = {
@@ -95,7 +95,7 @@ def test_pgn_import_counts_and_preserves_raw_text(conn):
     report = import_records(conn, "pgn", str(PGN), pgn_records(PGN), username="Alice")
     assert (report.seen, report.new, report.duplicate, report.rejected) == (8, 5, 0, 3)
     assert count(conn, "games") == 5 and count(conn, "raw_games") == 8
-    file_text = PGN.read_text()
+    file_text = PGN.read_text(encoding="utf-8")
     for (raw,) in conn.execute("SELECT raw_text FROM raw_games"):
         assert raw in file_text  # stored byte-for-byte as it appears in the file
     errors = [r[0] for r in conn.execute("SELECT normalize_error FROM raw_games")]

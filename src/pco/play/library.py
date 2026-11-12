@@ -37,7 +37,12 @@ from pco.storage.db import connect
 Trainer = Callable[[], tuple[Any, Callable[[], Any], Callable[[], None] | None]]
 Report = Callable[..., None]  # (stage, detail="", fraction=None)
 
-DEFAULT_PREFS: dict[str, Any] = {"speed": DEFAULT_SPEED, "workers": None, "temperature": None}
+DEFAULT_PREFS: dict[str, Any] = {
+    "speed": DEFAULT_SPEED,
+    "workers": None,
+    "temperature": None,
+    "check_updates": True,
+}
 # Seconds per decision for each build stage at Lite, 4 workers, on the owner's 12-core
 # machine, 65,963 decisions (EXPERIMENTS E8.1). Warm = everything cached. Cold = nothing
 # cached: FINDING PATTERNS then pays for the model at every rating it tries (val) and at
@@ -95,24 +100,17 @@ def build_history(prev: PersonalProfile | None) -> dict[str, Any]:
 
 
 def real_trainer(settings: Settings) -> Trainer:
-    """Builds train with their own Maia (more torch threads) and Stockfish workers."""
+    """Builds train with their own Maia (more model threads) and Stockfish workers."""
 
     def make():
-        import torch
-
         from pco.analysis.stockfish import StockfishEvaluator
         from pco.priors.maia3 import Maia3Prior
 
         prior = Maia3Prior(
-            ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.torch_threads
+            ensure_asset(settings, MAIA3_5M, offline=True), threads=settings.model_threads
         )
         sf = stockfish_binary(settings)
-        # torch's thread count is process-wide: give live play its own setting back
-        return (
-            prior,
-            lambda: StockfishEvaluator(sf),
-            lambda: torch.set_num_threads(settings.live_threads),
-        )
+        return prior, lambda: StockfishEvaluator(sf), None  # sessions own their threads
 
     return make
 
@@ -252,7 +250,7 @@ class Library:
 
     def prefs(self) -> dict[str, Any]:
         try:
-            stored = json.loads(self._prefs_path.read_text())
+            stored = json.loads(self._prefs_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             stored = {}
         return {k: stored.get(k, v) for k, v in DEFAULT_PREFS.items()}
@@ -270,9 +268,11 @@ class Library:
                     raise LibraryError("temperature must be between 0.1 and 1.5")
             if key not in DEFAULT_PREFS:
                 raise LibraryError(f"unknown preference {key!r}")
+            if key == "check_updates" and not isinstance(value, bool):
+                raise LibraryError("check_updates must be true or false")
             prefs[key] = value
         self.settings.home.mkdir(parents=True, exist_ok=True)
-        self._prefs_path.write_text(json.dumps(prefs, indent=2))
+        self._prefs_path.write_text(json.dumps(prefs, indent=2), encoding="utf-8")
         return prefs
 
     # ------------------------------------------------------------- imports

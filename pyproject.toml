@@ -1,6 +1,6 @@
 [project]
 name = "you-vs-you"
-version = "0.0.1"
+version = "0.1.0"
 description = "You vs. You: a local-first chess opponent that learns how you play."
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
@@ -9,18 +9,27 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
   "chess>=1.11,<2",
   "numpy>=2.1,<3",
-  "torch>=2.8,<2.9",
-  # Human-move prior (AGPL-3.0). Pinned to the commit validated in Iteration 0.
-  "maia3",
+  # Runs the Maia-3 human-move prior (AGPL-3.0); weights exported by scripts/export_onnx.py.
+  # Intel Macs: onnxruntime stopped publishing x86_64 macOS wheels after 1.23 (logits agree
+  # with 1.31 to 2e-5 on 79 random positions).
+  "onnxruntime>=1.20,<2; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+  "onnxruntime>=1.20,<1.24; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+  # The native window. Linux uses the default browser instead (WebKitGTK cannot be bundled).
+  "pywebview>=5.3; sys_platform == 'win32' or sys_platform == 'darwin'",
 ]
 
 [project.scripts]
 pco = "pco.cli:main"
 
+[project.gui-scripts]
+you-vs-you = "pco.app:main"
+
 [dependency-groups]
 dev = ["pytest>=8,<9", "ruff>=0.14,<1"]
-# Only needed to reproduce the Iteration 0 prior comparison (scripts/feasibility_priors.py).
-bench = ["maia2==0.11.0"]
+# Only to re-export the Maia-3 weights to ONNX (scripts/export_onnx.py): `uv sync --group export`.
+# Release builds (packaging/): the frozen app and its icons.
+build = ["pyinstaller>=6.10", "pillow>=10"]
+export = ["torch>=2.8,<2.9", "onnx>=1.17", "maia3"]
 
 [tool.uv]
 default-groups = ["dev"]
@@ -55,5 +64,5 @@ target-version = "py312"
 select = ["E", "F", "I", "B", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
-"scripts/*" = ["E501"]  # experiment scripts print wide result rows
+"scripts/*" = ["E501"]  # script output rows are wide
 "tests/fixtures/*" = ["E501"]  # fixture movetext mirrors real one-line PGN

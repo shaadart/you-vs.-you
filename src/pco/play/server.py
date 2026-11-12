@@ -2,27 +2,36 @@
 time, and background jobs (bringing in games, rebuilding the Twin).
 
 Stdlib only and offline: the page is self-contained (inline SVG board, bundled fonts, no
-CDN). The server binds to 127.0.0.1, rejects foreign Host headers (DNS rebinding) and
-requires JSON POST bodies (so other websites cannot drive it with simple form posts).
+CDN). The server binds to 127.0.0.1, rejects foreign Host and Origin headers (DNS
+rebinding, other websites) and requires JSON POST bodies. When given a launch token it
+also requires a session cookie: the window opens `/?t=<token>` once, the server answers
+with an HttpOnly SameSite=Strict cookie, and nothing else on the machine can call the API.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import logging
 import math
 import os
 import random
 import re
+import secrets
 import statistics
 import threading
 import time
+from base64 import b64encode
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import chess
 
@@ -35,6 +44,8 @@ from pco.play.twin import TwinService, numbered, position_id
 from pco.presets import PRESETS
 from pco.priors.base import PriorRequest
 
+log = logging.getLogger("pco")
+SESSION_COOKIE = "pco_session"
 MAX_BODY = 64 * 1024 * 1024  # a PGN of a whole career fits comfortably
 FORGET_WORD = "FORGET"
 GLIMPSE_RATING = 1500  # "people" on the home page before you have a Twin
@@ -56,14 +67,17 @@ class PlayApp:
         player=None,
         rng=None,
         temperature: float | None = None,
+        engines=None,
     ):
+        self.update: dict[str, Any] | None = None  # a newer release, if the check found one
         self.library = library
+        self.engines = engines  # None: model and engine are the caller's (tests, CLI)
         self.cache = cache
         self.rng = rng or random.Random()
         self.temperature = temperature  # command-line override for every new game
         self.lock = threading.Lock()  # the game
-        # The HTTP server uses a new thread per request, but torch/OpenMP thread pools are
-        # per calling thread; one persistent inference thread avoids rebuilding them.
+        # The HTTP server uses a new thread per request; one persistent inference thread
+        # keeps model and engine calls off the request threads and in order.
         self.inference = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pco-inference")
         self.jobs = JobRunner()
         self.twin = TwinService(None, None, list, prior, evaluator, cache)
@@ -101,6 +115,7 @@ class PlayApp:
     ) -> None:
         if color not in ("white", "black"):
             raise SessionError("color must be 'white' or 'black'")
+        self._need_assets()
         if temperature is None:
             temperature = self.temperature
         if temperature is None:
@@ -167,7 +182,7 @@ class PlayApp:
             played.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
             path = played / f"{stamp}-{id(s):x}.pgn"
-            path.write_text(s.to_pgn())
+            path.write_text(s.to_pgn(), encoding="utf-8")
             self.saved_pgn = str(path)
             self.cache.commit()
 
@@ -216,6 +231,8 @@ class PlayApp:
             "has_twin": self.twin.has_twin,
             "games": 0,
             "job": self.jobs.view(),
+            "setup": self.setup_view(),
+            "update": self.update,
             "game": None,
         }
         if self.twin.player:
@@ -339,6 +356,39 @@ class PlayApp:
         job.meta.update({k: plan[k] for k in ("first", "rereads", "depth", "basis", "decisions")})
         return self.library.build(say, player, self.cache)
 
+    def open_update(self) -> dict[str, Any]:
+        """Show the release page in the system browser (the URL was checked when found)."""
+        if self.update is None:
+            raise SessionError("there is no newer version")
+        import webbrowser
+
+        webbrowser.open(self.update["url"])
+        return {"opened": True}
+
+    # ----------------------------------------------------------------- first-run setup
+    def setup_view(self) -> dict[str, Any]:
+        """What the page needs to know before it can play: is the model/engine on disk?"""
+        e = self.engines
+        if e is None:
+            return {"ready": True, "missing": [], "problem": None}
+        missing = [label for label, _ in e.missing()]
+        problem = e.problem()
+        return {"ready": not missing and problem is None, "missing": missing, "problem": problem}
+
+    def _need_assets(self) -> None:
+        view = self.setup_view()
+        if not view["ready"]:
+            raise LibraryError(view["problem"] or "The model is not downloaded yet.")
+
+    def start_setup(self):
+        """Download the model and engine. Returns (job, joined)."""
+        running = self.jobs.running()
+        if running is not None:
+            return running, True
+        if self.engines is None or self.setup_view()["ready"]:
+            raise SessionError("everything is already installed")
+        return self.jobs.start("setup", lambda job, say: self.engines.download(say)), False
+
     def start_import(
         self, source: str, username: str | None = None, pgn: str | None = None, build: bool = True
     ):
@@ -346,6 +396,8 @@ class PlayApp:
         running = self.jobs.running()
         if running is not None:
             return running, True
+        if build:
+            self._need_assets()
         player = self.twin.player
 
         def work(job, say):
@@ -368,6 +420,7 @@ class PlayApp:
         player = self.twin.player
         if not player:
             raise SessionError("there are no games yet")
+        self._need_assets()
 
         def work(job, say):
             profile = self._build(job, say, player)
@@ -470,10 +523,29 @@ class PlayApp:
 
     def close(self) -> None:
         self.inference.shutdown()
+        if self.engines is not None:
+            self.engines.close()
 
 
 def _page() -> bytes:
     return files("pco.play").joinpath("static/index.html").read_bytes()
+
+
+_INLINE_SCRIPT = re.compile(rb"<script(?:\s[^>]*)?>(.*?)</script>", re.S)
+
+
+def content_security_policy(page: bytes) -> str:
+    """Only the page's own inline scripts may run (by hash); nothing remote loads or is
+    contacted, and the page cannot be framed."""
+    hashes = " ".join(
+        "'sha256-" + b64encode(hashlib.sha256(body).digest()).decode() + "'"
+        for body in _INLINE_SCRIPT.findall(page)
+    )
+    return (
+        f"default-src 'none'; script-src {hashes}; style-src 'unsafe-inline'; "
+        "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
+        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    )
 
 
 # Only bundled font files are served; the pattern rules out traversal by construction.
@@ -488,7 +560,14 @@ def _static(path: str) -> bytes | None:
     return resource.read_bytes() if resource.is_file() else None
 
 
-def make_handler(app: PlayApp, allowed_hosts: set[str]) -> type[BaseHTTPRequestHandler]:
+def make_handler(
+    app: PlayApp, allowed_hosts: set[str], launch_token: str | None = None
+) -> type[BaseHTTPRequestHandler]:
+    self_origins = {f"http://{host}" for host in allowed_hosts}
+    session = secrets.token_urlsafe(32) if launch_token else None
+    launch = {"token": launch_token, "open": launch_token is not None}  # a link works once
+    csp = content_security_policy(_page())
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "pco-play"
 
@@ -510,10 +589,38 @@ def make_handler(app: PlayApp, allowed_hosts: set[str]) -> type[BaseHTTPRequestH
             self._send(status, json.dumps(payload).encode(), "application/json")
 
         def _host_ok(self) -> bool:
-            if self.headers.get("Host", "") in allowed_hosts:
+            if self.headers.get("Host", "") not in allowed_hosts:
+                self._json(HTTPStatus.FORBIDDEN, {"error": "forbidden host"})
+                return False
+            origin = self.headers.get("Origin")
+            if origin is not None and origin not in self_origins:
+                self._json(HTTPStatus.FORBIDDEN, {"error": "forbidden origin"})
+                return False
+            if session is not None and not self._has_session():
+                self._json(HTTPStatus.FORBIDDEN, {"error": "open the app from its window"})
+                return False
+            return True
+
+        def _has_session(self) -> bool:
+            cookie = SimpleCookie(self.headers.get("Cookie", "")).get(SESSION_COOKIE)
+            return cookie is not None and hmac.compare_digest(cookie.value, session)
+
+        def _redeem(self, query: str) -> bool:
+            """`/?t=<launch token>` once: set the session cookie and go to `/`."""
+            given = (parse_qs(query).get("t") or [""])[0]
+            if not (launch["open"] and hmac.compare_digest(given, launch["token"])):
+                self._json(HTTPStatus.FORBIDDEN, {"error": "this link was already used"})
                 return True
-            self._json(HTTPStatus.FORBIDDEN, {"error": "forbidden host"})
-            return False
+            launch["open"] = False
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", "/")
+            self.send_header(
+                "Set-Cookie", f"{SESSION_COOKIE}={session}; HttpOnly; SameSite=Strict; Path=/"
+            )
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return True
 
         def _respond(self, compute, game: bool = False) -> None:
             """Run a view/action; app errors become 409 with a message (and the game)."""
@@ -528,17 +635,23 @@ def make_handler(app: PlayApp, allowed_hosts: set[str]) -> type[BaseHTTPRequestH
                     state = app.state()
                 self._json(HTTPStatus.CONFLICT, {"error": str(exc), "state": state})
                 return
-            except Exception as exc:  # never drop the connection: the page shows the message
+            except Exception:  # never drop the connection: the page shows a message
+                log.exception("request failed: %s %s", self.command, self.path)
                 self._json(
                     HTTPStatus.INTERNAL_SERVER_ERROR,
-                    {"error": f"something went wrong: {type(exc).__name__}: {exc}"},
+                    {"error": "something went wrong (details are in the log)"},
                 )
                 return
             self._json(HTTPStatus.OK, payload)
 
         def do_GET(self) -> None:
+            url = urlsplit(self.path)
+            if session is not None and url.path == "/" and url.query:
+                if self.headers.get("Host", "") in allowed_hosts and self._redeem(url.query):
+                    return
             if not self._host_ok():
                 return
+            self.path = url.path
             views = {
                 "/api/home": app.home,
                 "/api/twin": app.portrait,
@@ -547,9 +660,15 @@ def make_handler(app: PlayApp, allowed_hosts: set[str]) -> type[BaseHTTPRequestH
                 "/api/settings": app.settings_view,
                 "/api/job": lambda: {"job": app.jobs.view()},
                 "/api/glimpse": app.glimpse,
+                "/api/setup": app.setup_view,
             }
             if self.path == "/":
-                self._send(HTTPStatus.OK, _page(), "text/html; charset=utf-8")
+                self._send(
+                    HTTPStatus.OK,
+                    _page(),
+                    "text/html; charset=utf-8",
+                    {"Content-Security-Policy": csp, "X-Content-Type-Options": "nosniff"},
+                )
             elif self.path == "/api/state":
                 self._respond(app.state, game=True)
             elif self.path == "/api/reflection":
@@ -621,6 +740,8 @@ def make_handler(app: PlayApp, allowed_hosts: set[str]) -> type[BaseHTTPRequestH
                     )
                 ),
                 "/api/build": lambda: job_view(app.start_build()),
+                "/api/setup": lambda: job_view(app.start_setup()),
+                "/api/open-update": app.open_update,
                 "/api/glimpse": lambda: app.glimpse_answer(
                     int(body.get("id", 0)), str(body.get("uci", ""))
                 ),
@@ -640,12 +761,26 @@ def make_handler(app: PlayApp, allowed_hosts: set[str]) -> type[BaseHTTPRequestH
             else:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
+    def issue_launch() -> str:
+        """A fresh single-use link token (e.g. to reopen the page in a browser)."""
+        launch.update(token=secrets.token_urlsafe(24), open=True)
+        return launch["token"]
+
+    Handler.issue_launch = staticmethod(issue_launch)
     return Handler
 
 
-def make_server(app: PlayApp, port: int = 8765) -> ThreadingHTTPServer:
-    """Bind on 127.0.0.1 (port 0 picks a free port). Caller runs serve_forever()."""
+def make_server(
+    app: PlayApp, port: int = 8765, launch_token: str | None = None
+) -> ThreadingHTTPServer:
+    """Bind on 127.0.0.1 (port 0 picks a free port). Caller runs serve_forever().
+
+    With a `launch_token`, every request needs the session cookie that opening
+    `/?t=<launch_token>` (once) sets; without one the server is open to the machine."""
     server = ThreadingHTTPServer(("127.0.0.1", port), BaseHTTPRequestHandler)
     actual = server.server_address[1]
-    server.RequestHandlerClass = make_handler(app, {f"127.0.0.1:{actual}", f"localhost:{actual}"})
+    hosts = {f"127.0.0.1:{actual}", f"localhost:{actual}"}
+    handler = make_handler(app, hosts, launch_token)
+    server.RequestHandlerClass = handler
+    server.issue_launch = handler.issue_launch
     return server
