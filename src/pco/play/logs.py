@@ -19,6 +19,9 @@ def setup_logging(home: Path) -> Path:
         file = RotatingFileHandler(path, maxBytes=512 * 1024, backupCount=2, encoding="utf-8")
         file.setFormatter(fmt)
         log.addHandler(file)
+        webview_log = logging.getLogger("pywebview")  # the window toolkit's own messages
+        webview_log.setLevel(logging.INFO)
+        webview_log.addHandler(file)
         if sys.stderr is not None:  # a windowed, frozen app has none
             console = logging.StreamHandler(sys.stderr)
             console.setFormatter(fmt)

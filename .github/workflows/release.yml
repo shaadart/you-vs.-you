@@ -75,7 +75,8 @@ jobs:
         shell: pwsh
         run: |
           $p = Start-Process dist\YouVsYou\YouVsYou.exe -ArgumentList "--home","$env:RUNNER_TEMP\pco-window","--port","0","--window-test" -Wait -PassThru
-          Get-Content "$env:RUNNER_TEMP\pco-window\logs\app.log"
+          Get-Content "$env:RUNNER_TEMP\pco-window\logs\app.log", "$env:RUNNER_TEMP\pco-window\logs\crash.log" -ErrorAction SilentlyContinue
+          "exit code: $($p.ExitCode)"
           if ($p.ExitCode -ne 0) { exit 1 }
       - name: Window test (macOS)
         if: runner.os == 'macOS'

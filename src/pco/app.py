@@ -379,6 +379,16 @@ def window_test(url: str, home: Path, app) -> int:
     return 0 if all(checks.values()) else 1
 
 
+def _record_crashes(path: Path) -> None:
+    """A native crash (the window toolkit) never reaches Python's log: dump its stack."""
+    import faulthandler
+
+    try:
+        faulthandler.enable(file=path.open("a", encoding="utf-8"), all_threads=True)
+    except OSError:
+        pass
+
+
 def run(
     settings: Settings,
     *,
@@ -387,7 +397,8 @@ def run(
     test: bool = False,
     test_window: bool = False,
 ) -> int:
-    setup_logging(settings.home)  # first, so even a refused second launch is on record
+    logs = setup_logging(settings.home)  # first, so even a refused second launch is on record
+    _record_crashes(logs.with_name("crash.log"))
     lock = InstanceLock(settings.home / "app.lock")
     try:
         lock.acquire()
