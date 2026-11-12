@@ -11,7 +11,7 @@ REPO="https://github.com/shaadart/you-vs.-you"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 APP_DIR="$DATA/youvsyou"
 DESKTOP="$DATA/applications/youvsyou.desktop"
-ICON="$DATA/icons/hicolor/512x512/apps/youvsyou.png"
+OLD_ICON="$DATA/icons/hicolor/512x512/apps/youvsyou.png"  # where 0.1.x put it
 BIN="$HOME/.local/bin/youvsyou"
 
 say() { printf '%s\n' "$*"; }
@@ -26,7 +26,7 @@ refresh() {
 
 if [ "${1:-}" = "--uninstall" ]; then
   rm -rf "$APP_DIR"
-  rm -f "$DESKTOP" "$ICON" "$BIN"
+  rm -f "$DESKTOP" "$OLD_ICON" "$BIN"
   refresh
   say "Removed. Your games and Twin are still in ${PCO_HOME:-$DATA/pco}."
   exit 0
@@ -68,9 +68,9 @@ fi
 
 # Copy into place (a fresh copy each time, so an update leaves no stale files behind).
 rm -rf "$APP_DIR"
-mkdir -p "$APP_DIR" "$(dirname "$DESKTOP")" "$(dirname "$ICON")" "$(dirname "$BIN")"
+mkdir -p "$APP_DIR" "$(dirname "$DESKTOP")" "$(dirname "$BIN")"
 cp -a "$HERE/." "$APP_DIR/"
-cp "$HERE/icon.png" "$ICON"
+rm -f "$OLD_ICON"
 ln -sf "$APP_DIR/YouVsYou" "$BIN"
 
 cat > "$DESKTOP" <<DESK
@@ -79,7 +79,7 @@ Type=Application
 Name=You vs. You
 Comment=Play chess against yourself
 Exec="$APP_DIR/YouVsYou"
-Icon=youvsyou
+Icon=$APP_DIR/icon.png
 Terminal=false
 Categories=Game;BoardGame;
 Keywords=chess;

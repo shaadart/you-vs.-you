@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="packaging/icons/logo-graphite.png">
+    <img src="packaging/icons/logo-paper.png" alt="" width="96">
+  </picture>
+</p>
+
 # You vs. You
 It has always been you vs. *you*, twin!
 

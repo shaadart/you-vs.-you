@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <style>
+    .pawn { fill: var(--ink, #191816); }
+    .relief { fill: var(--machine, #2747D9); }
+    @media (prefers-color-scheme: dark) {
+      .pawn { fill: var(--ink, #ECE8E0); }
+      .relief { fill: var(--machine, #93A6FF); }
+    }
+  </style>
+  <path class="pawn" d="M60 12 C54.2 12 50.5 16.2 50.5 21.5 C50.5 25.8 53.2 29.6 55.5 31.4 L55 33 L40 33 L39 34.2 L40.2 36.2 C45.5 37.8 49.5 39 51 40.5 C50.2 56 45.5 73 37 87 L34 87 L34 96 L30 96 L30 108 L60 108 L90 108 L90 96 L86 96 L86 87 L81 87 L81 78 L78 78 L78 69 L75 69 L75 60 L72 60 L72 48 L69 48 L69 39 L81 39 L81 33 L66 33 L66 30 L69 30 L69 27 L72 27 L72 18 L69 18 L69 15 L66 15 L66 12 Z"/>
+  <rect class="relief" x="66" y="15" width="3" height="3"/><rect class="relief" x="69" y="18" width="3" height="9"/><rect class="relief" x="66" y="27" width="3" height="3"/><rect class="relief" x="78" y="33" width="3" height="6"/><rect class="relief" x="69" y="39" width="12" height="3"/><rect class="relief" x="69" y="48" width="3" height="12"/><rect class="relief" x="72" y="60" width="3" height="9"/><rect class="relief" x="75" y="69" width="3" height="9"/><rect class="relief" x="78" y="78" width="3" height="9"/><rect class="relief" x="83" y="87" width="3" height="9"/><rect class="relief" x="87" y="96" width="3" height="12"/>
+</svg>
