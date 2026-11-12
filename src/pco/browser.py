@@ -25,7 +25,9 @@ def open_url(url: str) -> bool:
         else:
             os.environ["LD_LIBRARY_PATH"] = original
     try:
-        opened = webbrowser.open(url)
+        # the app routes webbrowser.open through here; call what it wraps
+        real = getattr(webbrowser.open, "__wrapped__", webbrowser.open)
+        opened = real(url)
     except Exception as exc:
         log.warning("could not open a browser: %s: %s", type(exc).__name__, exc)
         return False

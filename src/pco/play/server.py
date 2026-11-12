@@ -82,6 +82,7 @@ class PlayApp:
         self.jobs = JobRunner()
         self.twin = TwinService(None, None, list, prior, evaluator, cache)
         self.session: GameSession | None = None
+        self.api_calls = 0  # page requests that carried the session (the window test reads it)
         self._glimpses: dict[int, chess.Board] = {}
         self._glimpse_id = 0
         self._reset_game()
@@ -663,6 +664,8 @@ def make_handler(
             if not self._host_ok():
                 return
             self.path = url.path
+            if self.path.startswith("/api/"):
+                app.api_calls += 1
             views = {
                 "/api/home": app.home,
                 "/api/twin": app.portrait,

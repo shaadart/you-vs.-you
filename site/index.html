@@ -25,6 +25,7 @@ h2 { font-weight: 400; font-size: 1.1rem; margin: 2.4em 0 .4em; }
 ul { padding-left: 1.2em; color: var(--ink-2); margin: 0 0 1.2em; }
 a { color: var(--machine); }
 code { font: 14px ui-monospace, Menlo, Consolas, monospace; }
+pre { overflow-x: auto; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 8px; white-space: pre; }
 footer { margin-top: 3em; font: 12px/1.6 ui-monospace, Menlo, Consolas, monospace; color: var(--ink-2); }
 </style>
 </head>
@@ -37,9 +38,11 @@ footer { margin-top: 3em; font: 12px/1.6 ui-monospace, Menlo, Consolas, monospac
     <a href="https://github.com/shaadart/you-vs.-you/releases/latest/download/YouVsYou-windows-x64-setup.exe">Windows <small>.exe installer</small></a>
     <a href="https://github.com/shaadart/you-vs.-you/releases/latest/download/YouVsYou-macos-arm64.dmg">macOS, Apple silicon <small>.dmg</small></a>
     <a href="https://github.com/shaadart/you-vs.-you/releases/latest/download/YouVsYou-macos-x64.dmg">macOS, Intel <small>.dmg</small></a>
-    <a href="https://github.com/shaadart/you-vs.-you/releases/latest/download/YouVsYou-linux-x64.tar.gz">Linux <small>.tar.gz</small></a>
+    <a href="https://github.com/shaadart/you-vs.-you/releases/latest/download/YouVsYou-linux-x64.tar.xz">Linux <small>.tar.xz</small></a>
   </nav>
-  <p><b>Linux:</b> unpack the archive and run <code>./install.sh</code> inside it. The app appears in your menu with its icon, and <code>./install.sh --uninstall</code> removes it. Your games are kept.</p>
+  <p><b>Linux</b> (Ubuntu, Debian, Fedora, Arch, CachyOS…): paste this in a terminal. It downloads the app, checks it, and adds it to your menu. Run it again to update.</p>
+  <pre><code>curl -fsSL https://github.com/shaadart/you-vs.-you/releases/latest/download/install.sh | sh</code></pre>
+  <p>The app opens in its own window, never in a browser tab.</p>
   <p>Everything it needs is inside, so it works the first time, even offline. Tell it your Chess.com or Lichess name, or give it a PGN file.</p>
 
   <h2>Your system will warn you once</h2>

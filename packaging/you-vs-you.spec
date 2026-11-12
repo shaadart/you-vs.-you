@@ -17,12 +17,22 @@ a = Analysis(
     pathex=[str(src)],
     datas=[
         (str(src / "pco" / "play" / "static"), "pco/play/static"),
-        (str(icons / "icon.png"), "pco"),  # the control window's icon
+        (str(icons / "icon.png"), "pco"),  # the window icon
         *bundled_datas,
     ],
     hiddenimports=[],
-    excludes=["pytest", "_pytest", "IPython", "matplotlib", "scipy", "pandas", "PIL"],
+    excludes=[
+        "pytest", "_pytest", "IPython", "matplotlib", "scipy", "pandas", "PIL", "gi",
+        # Qt modules the window does not use (pywebview needs Widgets + WebEngine only)
+        "PyQt6.QtQuick", "PyQt6.QtQml", "PyQt6.QtQuickWidgets", "PyQt6.QtPositioning",
+        "PyQt6.QtOpenGLWidgets", "PyQt6.QtMultimedia", "PyQt6.QtWebEngineQuick",
+    ],
 )
+if sys.platform.startswith("linux"):  # the window's Qt, without the build host's libraries
+    sys.path.insert(0, str(root / "packaging"))
+    from prune_linux import prune
+
+    a.binaries, a.datas = prune(a.binaries, a.datas)
 pyz = PYZ(a.pure)
 icon = {"win32": "icon.ico", "darwin": "icon.icns"}.get(sys.platform)
 exe = EXE(
@@ -43,7 +53,7 @@ if sys.platform == "darwin":
         bundle_identifier="com.madebyshaad.youvsyou",
         info_plist={
             "CFBundleDisplayName": "You vs. You",
-            "CFBundleShortVersionString": "0.1.3",
+            "CFBundleShortVersionString": "0.2.0",
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "11.0",
         },

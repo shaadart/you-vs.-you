@@ -27,3 +27,4 @@ AI_CONTEXTS/
 installer/
 build/
 packaging/_bundled/
+packaging/windows/MicrosoftEdgeWebview2Setup.exe

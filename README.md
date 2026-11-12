@@ -115,9 +115,21 @@ Download the app for your computer from the
 | Windows | `YouVsYou-windows-x64-setup.exe` |
 | macOS, Apple silicon | `YouVsYou-macos-arm64.dmg` |
 | macOS, Intel | `YouVsYou-macos-x64.dmg` |
-| Linux | `YouVsYou-linux-x64.tar.gz`: unpack it, then run `./install.sh` inside. It adds the app to your menu, with its icon. `./install.sh --uninstall` removes it and keeps your games |
+| Linux | `YouVsYou-linux-x64.tar.xz`, or the one-line install below |
 
-Everything it needs is inside: the playing model and the move checker. It works the first
+**Linux** (x86-64; Ubuntu 22.04+, Debian 12+, Fedora, Arch and its family such as CachyOS):
+
+```sh
+curl -fsSL https://github.com/shaadart/you-vs.-you/releases/latest/download/install.sh | sh
+```
+
+It downloads the latest release, checks it against `SHA256SUMS`, and installs it in your home
+folder (no root): the app joins your menu with its icon, and `youvsyou` starts it from a
+terminal. Run the same line again to update. `sh ~/.local/share/youvsyou/install.sh --uninstall`
+removes it and keeps your games. From the archive instead: unpack it and run `./install.sh`.
+
+It opens in its own window (Edge WebView2 on Windows, WebKit on macOS, a bundled Qt
+WebEngine on Linux), never in a browser tab. Everything it needs is inside: the playing model and the move checker. It works the first
 time you open it, with no internet. Tell it your Chess.com or Lichess name, or give it a PGN
 file. That's the whole setup.
 
@@ -134,7 +146,7 @@ Each release lists `SHA256SUMS`, and the files carry GitHub build attestations
 ```sh
 uv sync
 uv run pco setup    # once: downloads the model and Stockfish (the installers include them)
-uv run pco app      # a window; or `uv run pco play` for your browser
+uv run pco app      # the app window; or `uv run pco play` for your browser
 ```
 
 ## How it works, without the jargon

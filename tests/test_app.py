@@ -366,3 +366,67 @@ def test_browser_launch_gets_the_users_library_path_not_the_bundles(monkeypatch)
     monkeypatch.delenv("LD_LIBRARY_PATH_ORIG")
     open_url("http://127.0.0.1:1/")
     assert seen["ld"] is None  # no original value: the variable is simply removed
+
+
+# ------------------------------------------------------------------ the desktop window
+def test_the_app_routes_outside_links_without_looping(monkeypatch):
+    import webbrowser
+
+    from pco import app as app_mod
+
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", lambda url, *a, **k: opened.append(url) or True)
+    app_mod._links_through_open_url()
+    app_mod._links_through_open_url()  # twice: still one layer
+    assert webbrowser.open("https://github.com/x", 2, True)
+    assert opened == ["https://github.com/x"]
+
+
+def test_a_second_launch_asks_the_open_window_to_come_forward(tmp_path, monkeypatch):
+    from pco import app as app_mod
+
+    notices = []
+    monkeypatch.setattr(app_mod, "_notice", notices.append)
+    app_mod._port_file(tmp_path).write_text("8765 window", encoding="utf-8")
+    app_mod._show_running_app(tmp_path)
+    assert app_mod._show_file(tmp_path).exists() and notices == []
+
+
+def test_qt_sandbox_is_kept_unless_user_namespaces_are_blocked(monkeypatch):
+    from pathlib import Path
+
+    from pco import app as app_mod
+
+    files = {"/proc/sys/kernel/apparmor_restrict_unprivileged_userns": "1\n"}
+    real = Path.read_text
+
+    def fake(self, *a, **k):
+        if str(self) in files:
+            return files[str(self)]
+        if str(self).startswith("/proc/sys/"):
+            raise OSError
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", fake)
+    assert not app_mod._sandbox_allowed()
+    files["/proc/sys/kernel/apparmor_restrict_unprivileged_userns"] = "0\n"
+    assert app_mod._sandbox_allowed()
+
+
+def test_linux_prune_drops_qt_extras_and_host_libraries():
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).parents[1] / "packaging"))
+    from prune_linux import HOST_ONLY, QT_UNUSED
+
+    assert QT_UNUSED.match("PyQt6/Qt6/qml/QtQuick/qmldir")
+    assert QT_UNUSED.match("PyQt6/Qt6/translations/qtbase_de.qm")
+    assert QT_UNUSED.match("PyQt6/Qt6/plugins/platformthemes/libqgtk3.so")
+    assert not QT_UNUSED.match("PyQt6/Qt6/translations/qtwebengine_locales/en-US.pak")
+    assert not QT_UNUSED.match("PyQt6/Qt6/plugins/platforms/libqwayland.so")
+    assert not QT_UNUSED.match("PyQt6/Qt6/resources/qtwebengine_resources.pak")
+    for host in ("libstdc++.so.6", "libgbm.so.1", "libX11.so.6", "libz.so.1", "libglib-2.0.so.0"):
+        assert HOST_ONLY.match(host), host
+    for ours in ("libxcb-cursor.so.0", "libnss3.so", "libQt6Core.so.6", "libzstd.so.1"):
+        assert not HOST_ONLY.match(ours), ours
