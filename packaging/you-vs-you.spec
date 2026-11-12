@@ -58,3 +58,16 @@ if sys.platform == "darwin":
             "LSMinimumSystemVersion": "11.0",
         },
     )
+    # PyInstaller rewrites every Mach-O it collects (thins, patches the SDK version, re-signs).
+    # Its rewrite of Stockfish dies with SIGBUS on Intel Macs; Apple's own lipo is safe.
+    import platform
+    import subprocess
+
+    engine = bundled / "engines" / "stockfish-19" / "stockfish"
+    if engine.is_file():
+        inside = Path(app.name) / "Contents" / "Frameworks" / "bundled" / engine.relative_to(bundled)
+        inside.unlink()
+        subprocess.run(
+            ["lipo", str(engine), "-thin", platform.machine(), "-output", str(inside)], check=True
+        )
+        subprocess.run(["codesign", "--force", "--sign", "-", str(inside)], check=True)

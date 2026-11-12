@@ -84,17 +84,17 @@ jobs:
         timeout-minutes: 5
         shell: pwsh
         run: |
-          $p = Start-Process dist\YouVsYou\YouVsYou.exe -ArgumentList "--home","$env:RUNNER_TEMP\pco","--port","0","--window-test" -Wait -PassThru
-          Get-Content "$env:RUNNER_TEMP\pco\logs\app.log" -Tail 20
+          $p = Start-Process dist\YouVsYou\YouVsYou.exe -ArgumentList "--home","$env:RUNNER_TEMP\pco-window","--port","0","--window-test" -Wait -PassThru
+          Get-Content "$env:RUNNER_TEMP\pco-window\logs\app.log"
           if ($p.ExitCode -ne 0) { exit 1 }
       - name: Window test (macOS)
         if: runner.os == 'macOS'
         timeout-minutes: 5
-        run: dist/YouVsYou.app/Contents/MacOS/YouVsYou --home "$RUNNER_TEMP/pco" --port 0 --window-test
+        run: dist/YouVsYou.app/Contents/MacOS/YouVsYou --home "$RUNNER_TEMP/pco-window" --port 0 --window-test
       - name: Window test (Linux, X11 under Xvfb)
         if: runner.os == 'Linux'
         timeout-minutes: 5
-        run: xvfb-run -a dist/YouVsYou/YouVsYou --home "$RUNNER_TEMP/pco" --port 0 --window-test
+        run: xvfb-run -a dist/YouVsYou/YouVsYou --home "$RUNNER_TEMP/pco-window" --port 0 --window-test
 
       - name: Installer (Windows)
         if: runner.os == 'Windows'

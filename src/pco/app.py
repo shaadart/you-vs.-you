@@ -387,13 +387,14 @@ def run(
     test: bool = False,
     test_window: bool = False,
 ) -> int:
+    setup_logging(settings.home)  # first, so even a refused second launch is on record
     lock = InstanceLock(settings.home / "app.lock")
     try:
         lock.acquire()
     except AlreadyRunning:
+        log.info("already open: showing the running copy")
         _show_running_app(settings.home)
         return 1
-    setup_logging(settings.home)
     try:
         app, close = open_app(settings, check_updates=not test)
     except LibraryError as exc:
@@ -453,6 +454,14 @@ def main(argv: list[str] | None = None) -> int:
         "--window-test", action="store_true", help="open the window, check the page, and exit"
     )
     args = parser.parse_args(argv)
+    try:
+        return _run_from_args(args)
+    except Exception:  # a windowed app has no terminal: the log is the only witness
+        log.exception("the app stopped")
+        return 1
+
+
+def _run_from_args(args: argparse.Namespace) -> int:
     return run(
         load_settings(args.home),
         port=args.port,
