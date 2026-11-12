@@ -12,15 +12,16 @@ import argparse
 import http.cookiejar
 import json
 import logging
+import os
 import secrets
 import sys
 import threading
 import urllib.error
 import urllib.request
-import webbrowser
 from pathlib import Path
 
 from pco.analysis.stockfish import AnalysisLimit
+from pco.browser import open_url
 from pco.config import Settings, load_settings
 from pco.play.boot import bind_server, open_app
 from pco.play.instance import AlreadyRunning, InstanceLock
@@ -74,7 +75,7 @@ def _show_running_app(home: Path) -> None:
     except (OSError, ValueError):
         return _notice(f"{TITLE} is already open. Look for its window, or quit it first.")
     if mode == "browser":  # same browser profile: its session cookie is still valid
-        webbrowser.open(f"http://127.0.0.1:{port}/")
+        open_url(f"http://127.0.0.1:{port}/")
         _notice(f"{TITLE} is already open. Showing it in your browser.")
     else:
         _notice(f"{TITLE} is already open. Look for its window.")
@@ -87,6 +88,10 @@ def _model_checks(app) -> dict[str, bool]:
     from pco.priors.base import PriorRequest
 
     checks = {}
+    if os.environ.get("PCO_EXPECT_BUNDLED"):  # CI: a release must carry its own model + engine
+        checks["the app carries its model and engine"] = bool(
+            app.engines is not None and app.engines.ready()
+        )
     try:
         import onnxruntime  # noqa: F401  (a frozen build can lose it)
 
@@ -134,7 +139,7 @@ def self_test(port: int, token: str, app=None) -> int:
 
 def _wait_in_browser(url: str, fresh_url) -> None:
     """Linux and anywhere without pywebview: the default browser shows the page."""
-    webbrowser.open(url)
+    open_url(url)
     try:
         import tkinter as tk
 
@@ -169,7 +174,7 @@ def _wait_in_browser(url: str, fresh_url) -> None:
     ).pack(pady=(8, 16))
     row = ttk.Frame(box)
     row.pack()
-    ttk.Button(row, text="Open", command=lambda: webbrowser.open(fresh_url())).pack(side="left")
+    ttk.Button(row, text="Open", command=lambda: open_url(fresh_url())).pack(side="left")
     ttk.Button(row, text="Quit", command=root.destroy).pack(side="left", padx=(10, 0))
     root.mainloop()
 

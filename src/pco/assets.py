@@ -7,6 +7,7 @@ checksum, so installs are reproducible and a corrupted or substituted file is re
 from __future__ import annotations
 
 import hashlib
+import os
 import platform
 import shutil
 import sys
@@ -94,7 +95,24 @@ def stockfish_asset() -> Asset | None:
     return _STOCKFISH.get((sys.platform, platform.machine().lower()))
 
 
+def bundled_dir() -> Path | None:
+    """Assets shipped inside the installed app (a frozen build), if any.
+
+    `PCO_BUNDLED_ASSETS` points at a folder with the same layout, for testing."""
+    env = os.environ.get("PCO_BUNDLED_ASSETS")
+    if env:
+        base = Path(env)
+    elif getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base = Path(sys._MEIPASS) / "bundled"
+    else:
+        return None
+    return base if base.is_dir() else None
+
+
 def asset_path(settings: Settings, asset: Asset) -> Path:
+    """Where the asset is: inside the app if it was shipped there, else in the data home."""
+    if (bundled := bundled_dir()) is not None and (inside := bundled / asset.relpath).exists():
+        return inside
     return settings.assets_dir / asset.relpath
 
 
@@ -150,9 +168,10 @@ def ensure_asset(
     progress: Progress | None = None,
 ) -> Path:
     """Return the installed asset path, downloading and verifying it if missing."""
-    target = asset_path(settings, asset)
-    if target.exists():
-        return target
+    installed = asset_path(settings, asset)
+    if installed.exists():
+        return _executable(installed) if asset.archive_member else installed
+    target = settings.assets_dir / asset.relpath  # downloads always go to the data home
     if offline:
         raise AssetError(f"{asset.name} is not installed at {target}; run `pco setup`.")
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -177,6 +196,16 @@ def ensure_asset(
     return target
 
 
+def _executable(path: Path) -> Path:
+    """An engine shipped inside an app may have lost its execute bit; restore it if we can."""
+    if sys.platform != "win32" and not os.access(path, os.X_OK):
+        try:
+            path.chmod(path.stat().st_mode | 0o111)
+        except OSError:
+            pass
+    return path
+
+
 def stockfish_binary(settings: Settings, *, offline: bool = True) -> Path:
     """Locate Stockfish: PCO_STOCKFISH override > installed asset > PATH."""
     if settings.stockfish_path:
@@ -185,7 +214,7 @@ def stockfish_binary(settings: Settings, *, offline: bool = True) -> Path:
         return settings.stockfish_path
     asset = stockfish_asset()
     if asset and asset_path(settings, asset).exists():
-        return asset_path(settings, asset)
+        return _executable(asset_path(settings, asset))
     found = shutil.which("stockfish")
     if found:
         return Path(found)

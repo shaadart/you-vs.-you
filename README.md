@@ -117,9 +117,9 @@ Download the app for your computer from the
 | macOS, Intel | `YouVsYou-macos-x64.dmg` |
 | Linux | `YouVsYou-linux-x64.tar.gz`: unpack it, then run `./install.sh` inside. It adds the app to your menu, with its icon. `./install.sh --uninstall` removes it and keeps your games |
 
-The first time it opens, it downloads the model and a move checker, about 120 MB, and
-checks each against a fixed fingerprint. Then tell it your Chess.com or Lichess name, or
-give it a PGN file. That's the whole setup.
+Everything it needs is inside: the playing model and the move checker. It works the first
+time you open it, with no internet. Tell it your Chess.com or Lichess name, or give it a PGN
+file. That's the whole setup.
 
 The app isn't signed with a paid certificate yet, so your system will warn you once:
 
@@ -133,6 +133,7 @@ Each release lists `SHA256SUMS`, and the files carry GitHub build attestations
 
 ```sh
 uv sync
+uv run pco setup    # once: downloads the model and Stockfish (the installers include them)
 uv run pco app      # a window; or `uv run pco play` for your browser
 ```
 
@@ -171,9 +172,8 @@ Honestly:
 
 Everything lives on your computer (Linux `~/.local/share/pco`, macOS
 `~/Library/Application Support/pco`, Windows `%LOCALAPPDATA%\pco`). It goes online
-only to read your *public* games from Chess.com or Lichess when you ask, to download the
-model and move checker once, and, unless you turn it off in Settings, to ask GitHub
-whether a newer version exists. Nothing about you is sent. There is no account and no
+only to read your *public* games from Chess.com or Lichess when you ask and, unless you turn it
+off in Settings, to ask GitHub whether a newer version exists. Nothing about you is sent. There is no account and no
 server of ours. From Settings you can forget your Twin, or forget everything.
 
 The app's local server listens on `127.0.0.1` only, and only the app's own window can

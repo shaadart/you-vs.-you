@@ -342,3 +342,27 @@ def test_a_browser_without_the_session_gets_a_human_page(secured):
     assert b"needs the app" in body
     resp, body = Client(srv).call("GET", "/api/home")
     assert resp.status == 403 and resp.getheader("Content-Type").startswith("application/json")
+
+
+def test_browser_launch_gets_the_users_library_path_not_the_bundles(monkeypatch):
+    import os
+    import sys
+    import webbrowser
+
+    from pco.browser import open_url
+
+    seen = {}
+
+    def fake_open(url):
+        seen["ld"] = os.environ.get("LD_LIBRARY_PATH")
+        return True
+
+    monkeypatch.setattr(webbrowser, "open", fake_open)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/app/_internal")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/usr/lib/mine")
+    assert open_url("http://127.0.0.1:1/") and seen["ld"] == "/usr/lib/mine"
+    assert os.environ["LD_LIBRARY_PATH"] == "/app/_internal"  # the app's own is put back
+    monkeypatch.delenv("LD_LIBRARY_PATH_ORIG")
+    open_url("http://127.0.0.1:1/")
+    assert seen["ld"] is None  # no original value: the variable is simply removed

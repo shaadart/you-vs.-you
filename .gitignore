@@ -26,3 +26,4 @@ AI_CONTEXTS/
 # Release build output
 installer/
 build/
+packaging/_bundled/

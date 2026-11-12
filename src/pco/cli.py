@@ -194,8 +194,8 @@ def cmd_games(settings: Settings, verify: bool = False) -> int:
 def cmd_play(settings: Settings, args: argparse.Namespace) -> int:
     """The interface in your browser (the desktop app is `pco app`; docs/DESIGN.md)."""
     import secrets
-    import webbrowser
 
+    from pco.browser import open_url
     from pco.play.boot import open_app
     from pco.play.library import LibraryError
     from pco.play.logs import setup_logging
@@ -229,7 +229,7 @@ def cmd_play(settings: Settings, args: argparse.Namespace) -> int:
     print(f"Open this link once (it signs this browser in): {link}")
     print("Ctrl-C to stop.", flush=True)
     if not args.no_browser:
-        webbrowser.open(link)
+        open_url(link)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -360,9 +360,9 @@ class PlayApp:
         """Show the release page in the system browser (the URL was checked when found)."""
         if self.update is None:
             raise SessionError("there is no newer version")
-        import webbrowser
+        from pco.browser import open_url
 
-        webbrowser.open(self.update["url"])
+        open_url(self.update["url"])
         return {"opened": True}
 
     # ----------------------------------------------------------------- first-run setup
