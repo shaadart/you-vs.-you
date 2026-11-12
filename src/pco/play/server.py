@@ -546,8 +546,14 @@ _INLINE_SCRIPT = re.compile(rb"<script(?:\s[^>]*)?>(.*?)</script>", re.S)
 def content_security_policy(page: bytes) -> str:
     """Only the page's own inline scripts may run (by hash); nothing remote loads or is
     contacted, and the page cannot be framed."""
+    # Browsers hash a script after the HTML parser turns CRLF and CR into LF; a Windows
+    # checkout serves CRLF, and hashing those bytes would block every script.
     hashes = " ".join(
-        "'sha256-" + b64encode(hashlib.sha256(body).digest()).decode() + "'"
+        "'sha256-"
+        + b64encode(
+            hashlib.sha256(body.replace(b"\r\n", b"\n").replace(b"\r", b"\n")).digest()
+        ).decode()
+        + "'"
         for body in _INLINE_SCRIPT.findall(page)
     )
     return (

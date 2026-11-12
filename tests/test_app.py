@@ -431,3 +431,15 @@ def test_linux_prune_drops_qt_extras_and_host_libraries():
         assert HOST_ONLY.match(host), host
     for ours in ("libxcb-cursor.so.0", "libnss3.so", "libQt6Core.so.6", "libzstd.so.1"):
         assert not HOST_ONLY.match(ours), ours
+
+
+def test_csp_hashes_scripts_as_the_browser_sees_them():
+    import hashlib
+    from base64 import b64encode as enc
+
+    from pco.play.server import content_security_policy
+
+    lf = b"<script>\nlet a = 1;\nrun();\n</script>"
+    want = "'sha256-" + enc(hashlib.sha256(b"\nlet a = 1;\nrun();\n").digest()).decode() + "'"
+    assert want in content_security_policy(lf)
+    assert want in content_security_policy(lf.replace(b"\n", b"\r\n"))  # a Windows checkout
