@@ -115,7 +115,7 @@ Download the app for your computer from the
 | Windows | `YouVsYou-windows-x64-setup.exe` |
 | macOS, Apple silicon | `YouVsYou-macos-arm64.dmg` |
 | macOS, Intel | `YouVsYou-macos-x64.dmg` |
-| Linux | `YouVsYou-linux-x64.tar.gz` (unpack, run `YouVsYou/YouVsYou`) |
+| Linux | `YouVsYou-linux-x64.tar.gz`: unpack it, then run `./install.sh` inside. It adds the app to your menu, with its icon. `./install.sh --uninstall` removes it and keeps your games |
 
 The first time it opens, it downloads the model and a move checker, about 120 MB, and
 checks each against a fixed fingerprint. Then tell it your Chess.com or Lichess name, or

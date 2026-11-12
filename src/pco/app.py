@@ -139,22 +139,38 @@ def _wait_in_browser(url: str, fresh_url) -> None:
         import tkinter as tk
 
         root = tk.Tk()
-    except Exception:  # no tkinter or no display: wait for Ctrl-C
+    except Exception as exc:  # no tkinter or no display: wait for Ctrl-C
+        log.warning("no control window: %s: %s", type(exc).__name__, exc)
         _say(f"{TITLE} is running. Press Ctrl-C to quit.")
         try:
             threading.Event().wait()
         except KeyboardInterrupt:
             pass
         return
+    from tkinter import ttk
+
     root.title(TITLE)
     root.resizable(False, False)
     root.attributes("-topmost", True)  # easy to find; it is the app's only visible part
     root.after(1500, lambda: root.attributes("-topmost", False))
-    tk.Label(root, text=f"{TITLE} is running.", padx=28, pady=14).pack()
-    row = tk.Frame(root, padx=20, pady=12)
+    icon = Path(__file__).with_name("icon.png")
+    if icon.exists():  # shipped inside the frozen app
+        try:
+            root.iconphoto(True, tk.PhotoImage(file=str(icon)))
+        except tk.TclError:
+            pass
+    box = ttk.Frame(root, padding=(28, 22))
+    box.pack()
+    ttk.Label(box, text=f"{TITLE} is running", font=("TkDefaultFont", 13, "bold")).pack()
+    ttk.Label(
+        box,
+        text="Your games stay on this computer.\nClosing this window quits the app.",
+        justify="center",
+    ).pack(pady=(8, 16))
+    row = ttk.Frame(box)
     row.pack()
-    tk.Button(row, text="Open", command=lambda: webbrowser.open(fresh_url())).pack(side="left")
-    tk.Button(row, text="Quit", command=root.destroy).pack(side="left", padx=8)
+    ttk.Button(row, text="Open", command=lambda: webbrowser.open(fresh_url())).pack(side="left")
+    ttk.Button(row, text="Quit", command=root.destroy).pack(side="left", padx=(10, 0))
     root.mainloop()
 
 

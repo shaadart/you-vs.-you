@@ -10,7 +10,10 @@ icons = root / "packaging" / "icons"
 a = Analysis(
     [str(root / "packaging" / "entry.py")],
     pathex=[str(src)],
-    datas=[(str(src / "pco" / "play" / "static"), "pco/play/static")],
+    datas=[
+        (str(src / "pco" / "play" / "static"), "pco/play/static"),
+        (str(icons / "icon.png"), "pco"),  # the control window's icon
+    ],
     hiddenimports=[],
     excludes=["pytest", "_pytest", "IPython", "matplotlib", "scipy", "pandas", "PIL"],
 )
@@ -34,7 +37,7 @@ if sys.platform == "darwin":
         bundle_identifier="com.madebyshaad.youvsyou",
         info_plist={
             "CFBundleDisplayName": "You vs. You",
-            "CFBundleShortVersionString": "0.1.1",
+            "CFBundleShortVersionString": "0.1.2",
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "11.0",
         },

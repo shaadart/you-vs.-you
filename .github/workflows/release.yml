@@ -57,6 +57,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           mkdir installer
+          cp packaging/linux/install.sh packaging/icons/icon.png dist/YouVsYou/
           tar -C dist -czf "installer/YouVsYou-${{ matrix.name }}.tar.gz" YouVsYou
 
       - uses: actions/upload-artifact@v4
