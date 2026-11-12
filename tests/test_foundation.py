@@ -57,6 +57,38 @@ def test_ensure_asset_offline_missing(tmp_path):
         ensure_asset(settings, _local_asset(tmp_path, b"x"), offline=True)
 
 
+def test_an_archive_shipped_in_the_app_installs_offline_untouched(tmp_path, monkeypatch):
+    import hashlib
+    import io
+    import os
+    import tarfile
+
+    from pco.assets import Asset
+
+    engine = b"\xcf\xfa\xed\xfe universal engine bytes"
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        info = tarfile.TarInfo("stockfish/stockfish-macos-universal")
+        info.size = len(engine)
+        tar.addfile(info, io.BytesIO(engine))
+    shipped = tmp_path / "app" / "archives" / "sf.tar.gz"
+    shipped.parent.mkdir(parents=True)
+    shipped.write_bytes(buf.getvalue())
+    monkeypatch.setenv("PCO_BUNDLED_ASSETS", str(tmp_path / "app"))
+    asset = Asset(
+        name="sf",
+        url="https://example.invalid/releases/sf.tar.gz",  # never fetched
+        sha256=hashlib.sha256(buf.getvalue()).hexdigest(),
+        relpath="engines/sf/stockfish",
+        archive_member="stockfish/stockfish-macos-universal",
+    )
+    settings = load_settings(tmp_path / "home", env={})
+    path = ensure_asset(settings, asset, offline=True)
+    assert path == settings.assets_dir / asset.relpath
+    assert path.read_bytes() == engine  # byte for byte
+    assert os.name == "nt" or os.access(path, os.X_OK)
+
+
 def test_stockfish_override_must_exist(tmp_path):
     settings = replace(load_settings(tmp_path, env={}), stockfish_path=tmp_path / "nope")
     with pytest.raises(AssetError, match="PCO_STOCKFISH"):

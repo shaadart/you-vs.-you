@@ -1,0 +1,4 @@
+# The page's CSP pins its inline scripts by hash: keep served files byte-identical.
+*.html text eol=lf
+*.js text eol=lf
+*.sh text eol=lf

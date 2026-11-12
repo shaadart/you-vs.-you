@@ -338,7 +338,9 @@ def _window(url: str, home: Path, check: dict | None = None) -> Exception | None
             _bring_forward if check is None else _check_window,
             (window, home) if check is None else (window, check),
             gui=_gui(),
-            icon=_icon(),
+            # Linux only: Windows takes the .ico built into the exe (pywebview's winforms
+            # backend crashes .NET on a PNG), and macOS uses the app bundle's icon
+            icon=_icon() if _gui() == "qt" else None,
             private_mode=False,
             storage_path=str(home / "webview"),
         )
@@ -379,6 +381,16 @@ def window_test(url: str, home: Path, app) -> int:
     return 0 if all(checks.values()) else 1
 
 
+def _record_crashes(path: Path) -> None:
+    """A native crash (the window toolkit) never reaches Python's log: dump its stack."""
+    import faulthandler
+
+    try:
+        faulthandler.enable(file=path.open("a", encoding="utf-8"), all_threads=True)
+    except OSError:
+        pass
+
+
 def run(
     settings: Settings,
     *,
@@ -387,13 +399,15 @@ def run(
     test: bool = False,
     test_window: bool = False,
 ) -> int:
+    logs = setup_logging(settings.home)  # first, so even a refused second launch is on record
+    _record_crashes(logs.with_name("crash.log"))
     lock = InstanceLock(settings.home / "app.lock")
     try:
         lock.acquire()
     except AlreadyRunning:
+        log.info("already open: showing the running copy")
         _show_running_app(settings.home)
         return 1
-    setup_logging(settings.home)
     try:
         app, close = open_app(settings, check_updates=not test)
     except LibraryError as exc:
@@ -453,6 +467,14 @@ def main(argv: list[str] | None = None) -> int:
         "--window-test", action="store_true", help="open the window, check the page, and exit"
     )
     args = parser.parse_args(argv)
+    try:
+        return _run_from_args(args)
+    except Exception:  # a windowed app has no terminal: the log is the only witness
+        log.exception("the app stopped")
+        return 1
+
+
+def _run_from_args(args: argparse.Namespace) -> int:
     return run(
         load_settings(args.home),
         port=args.port,

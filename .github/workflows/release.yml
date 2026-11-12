@@ -29,17 +29,26 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
+          # every X library Qt's xcb plugin and WebEngine link to (readelf over the PyQt6 wheels)
           sudo apt-get install -y --no-install-recommends xvfb xauth libegl1 libgl1 \
-            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 \
-            libxcb-xkb1 libxkbcommon-x11-0 libxkbfile1 libnss3 libxcomposite1 libxdamage1 \
-            libxrandr2 libxtst6 libasound2 libcups2 libdbus-1-3 libfontconfig1
+            libx11-6 libx11-xcb1 libxcb1 libxcb-cursor0 libxcb-dri3-0 libxcb-glx0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render0 libxcb-render-util0 \
+            libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1 \
+            libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxkbcommon-x11-0 \
+            libxkbfile1 libxrandr2 libxtst6 libnss3 libasound2 libcups2 libdbus-1-3 libfontconfig1
       - run: uv sync --frozen --group build
       - run: uv run pytest -q
       - run: uv run ruff check . && uv run ruff format --check .
       - name: Fetch the model and engine to ship inside the app (checksum-verified)
         run: uv run python packaging/fetch_assets.py
-      - run: uv run pyinstaller packaging/you-vs-you.spec --noconfirm
-
+      - name: Freeze the app
+        shell: bash
+        run: |
+          uv run pyinstaller packaging/you-vs-you.spec --noconfirm 2>&1 | tee pyinstaller.log
+          # a library the app links to but the build machine lacks is missing for users too
+          if [ "$RUNNER_OS" = Linux ] && grep "Library not found" pyinstaller.log | grep -v "libtcl\|libtk"; then
+            echo "::error::install the libraries above on the build machine"; exit 1
+          fi
       - name: Self-test the frozen app (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -65,17 +74,18 @@ jobs:
         timeout-minutes: 5
         shell: pwsh
         run: |
-          $p = Start-Process dist\YouVsYou\YouVsYou.exe -ArgumentList "--home","$env:RUNNER_TEMP\pco","--port","0","--window-test" -Wait -PassThru
-          Get-Content "$env:RUNNER_TEMP\pco\logs\app.log" -Tail 20
+          $p = Start-Process dist\YouVsYou\YouVsYou.exe -ArgumentList "--home","$env:RUNNER_TEMP\pco-window","--port","0","--window-test" -Wait -PassThru
+          Get-Content "$env:RUNNER_TEMP\pco-window\logs\app.log", "$env:RUNNER_TEMP\pco-window\logs\crash.log" -ErrorAction SilentlyContinue
+          "exit code: $($p.ExitCode)"
           if ($p.ExitCode -ne 0) { exit 1 }
       - name: Window test (macOS)
         if: runner.os == 'macOS'
         timeout-minutes: 5
-        run: dist/YouVsYou.app/Contents/MacOS/YouVsYou --home "$RUNNER_TEMP/pco" --port 0 --window-test
+        run: dist/YouVsYou.app/Contents/MacOS/YouVsYou --home "$RUNNER_TEMP/pco-window" --port 0 --window-test
       - name: Window test (Linux, X11 under Xvfb)
         if: runner.os == 'Linux'
         timeout-minutes: 5
-        run: xvfb-run -a dist/YouVsYou/YouVsYou --home "$RUNNER_TEMP/pco" --port 0 --window-test
+        run: xvfb-run -a dist/YouVsYou/YouVsYou --home "$RUNNER_TEMP/pco-window" --port 0 --window-test
 
       - name: Installer (Windows)
         if: runner.os == 'Windows'

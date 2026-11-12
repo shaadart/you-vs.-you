@@ -53,7 +53,7 @@ if sys.platform == "darwin":
         bundle_identifier="com.madebyshaad.youvsyou",
         info_plist={
             "CFBundleDisplayName": "You vs. You",
-            "CFBundleShortVersionString": "0.2.0",
+            "CFBundleShortVersionString": "0.2.1",
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "11.0",
         },

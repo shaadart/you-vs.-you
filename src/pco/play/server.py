@@ -546,8 +546,14 @@ _INLINE_SCRIPT = re.compile(rb"<script(?:\s[^>]*)?>(.*?)</script>", re.S)
 def content_security_policy(page: bytes) -> str:
     """Only the page's own inline scripts may run (by hash); nothing remote loads or is
     contacted, and the page cannot be framed."""
+    # Browsers hash a script after the HTML parser turns CRLF and CR into LF; a Windows
+    # checkout serves CRLF, and hashing those bytes would block every script.
     hashes = " ".join(
-        "'sha256-" + b64encode(hashlib.sha256(body).digest()).decode() + "'"
+        "'sha256-"
+        + b64encode(
+            hashlib.sha256(body.replace(b"\r\n", b"\n").replace(b"\r", b"\n")).digest()
+        ).decode()
+        + "'"
         for body in _INLINE_SCRIPT.findall(page)
     )
     return (
@@ -606,6 +612,7 @@ def make_handler(
                 self._json(HTTPStatus.FORBIDDEN, {"error": "forbidden origin"})
                 return False
             if session is not None and not self._has_session():
+                log.info("refused %s %s: no session", self.command, self.path.split("?")[0])
                 if self.command == "GET" and self.path.split("?")[0] == "/":
                     self._send(HTTPStatus.FORBIDDEN, _LOCKED_PAGE, "text/html; charset=utf-8")
                 else:
@@ -621,6 +628,7 @@ def make_handler(
             """`/?t=<launch token>` once: set the session cookie and go to `/`."""
             given = (parse_qs(query).get("t") or [""])[0]
             if not (launch["open"] and hmac.compare_digest(given, launch["token"])):
+                log.info("refused a launch link that was already used or wrong")
                 self._json(HTTPStatus.FORBIDDEN, {"error": "this link was already used"})
                 return True
             launch["open"] = False
