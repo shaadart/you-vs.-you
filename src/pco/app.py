@@ -338,7 +338,9 @@ def _window(url: str, home: Path, check: dict | None = None) -> Exception | None
             _bring_forward if check is None else _check_window,
             (window, home) if check is None else (window, check),
             gui=_gui(),
-            icon=_icon(),
+            # Linux only: Windows takes the .ico built into the exe (pywebview's winforms
+            # backend crashes .NET on a PNG), and macOS uses the app bundle's icon
+            icon=_icon() if _gui() == "qt" else None,
             private_mode=False,
             storage_path=str(home / "webview"),
         )
