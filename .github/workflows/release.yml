@@ -29,17 +29,36 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
+          # every X library Qt's xcb plugin and WebEngine link to (readelf over the PyQt6 wheels)
           sudo apt-get install -y --no-install-recommends xvfb xauth libegl1 libgl1 \
-            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 \
-            libxcb-xkb1 libxkbcommon-x11-0 libxkbfile1 libnss3 libxcomposite1 libxdamage1 \
-            libxrandr2 libxtst6 libasound2 libcups2 libdbus-1-3 libfontconfig1
+            libx11-6 libx11-xcb1 libxcb1 libxcb-cursor0 libxcb-dri3-0 libxcb-glx0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render0 libxcb-render-util0 \
+            libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1 \
+            libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxkbcommon-x11-0 \
+            libxkbfile1 libxrandr2 libxtst6 libnss3 libasound2 libcups2 libdbus-1-3 libfontconfig1
       - run: uv sync --frozen --group build
       - run: uv run pytest -q
       - run: uv run ruff check . && uv run ruff format --check .
       - name: Fetch the model and engine to ship inside the app (checksum-verified)
         run: uv run python packaging/fetch_assets.py
-      - run: uv run pyinstaller packaging/you-vs-you.spec --noconfirm
-
+      - name: Freeze the app
+        shell: bash
+        run: |
+          uv run pyinstaller packaging/you-vs-you.spec --noconfirm 2>&1 | tee pyinstaller.log
+          # a library the app links to but the build machine lacks is missing for users too
+          if [ "$RUNNER_OS" = Linux ] && grep "Library not found" pyinstaller.log | grep -v "libtcl\|libtk"; then
+            echo "::error::install the libraries above on the build machine"; exit 1
+          fi
+      - name: Stockfish runs on this machine (macOS diagnostics)
+        if: runner.os == 'macOS'
+        run: |
+          set +e
+          uname -m; sysctl -n machdep.cpu.brand_string machdep.cpu.features machdep.cpu.leaf7_features
+          for SF in packaging/_bundled/assets/engines/stockfish-19/stockfish $(find dist/YouVsYou.app -name stockfish -type f); do
+            echo "== $SF"; file "$SF"; lipo -info "$SF"; codesign -dv "$SF" 2>&1 | head -3
+            printf 'uci\nisready\ngo nodes 1000\nquit\n' | "$SF" > sf.out 2>&1; echo "exit=$?"; tail -3 sf.out
+          done
+          exit 0
       - name: Self-test the frozen app (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

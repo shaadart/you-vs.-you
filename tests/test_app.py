@@ -401,9 +401,10 @@ def test_qt_sandbox_is_kept_unless_user_namespaces_are_blocked(monkeypatch):
     real = Path.read_text
 
     def fake(self, *a, **k):
-        if str(self) in files:
-            return files[str(self)]
-        if str(self).startswith("/proc/sys/"):
+        path = self.as_posix()  # Windows spells /proc/sys with backslashes
+        if path in files:
+            return files[path]
+        if path.startswith("/proc/sys/"):
             raise OSError
         return real(self, *a, **k)
 
