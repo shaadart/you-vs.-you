@@ -101,7 +101,11 @@ jobs:
         run: |
           codesign --force --deep --sign - dist/YouVsYou.app   # ad hoc: Apple silicon refuses unsigned code
           mkdir installer
-          hdiutil create -volname "You vs. You" -srcfolder dist/YouVsYou.app -ov -format ULMO "installer/YouVsYou-${{ matrix.name }}.dmg"  # LZMA (macOS 10.15+), smaller than zlib UDZO
+          # hdiutil sometimes fails with "Resource busy" on hosted runners: try a few times
+          for try in 1 2 3 4 5; do
+            hdiutil create -volname "You vs. You" -srcfolder dist/YouVsYou.app -ov -format ULMO "installer/YouVsYou-${{ matrix.name }}.dmg" && break  # ULMO: LZMA, macOS 10.15+
+            [ "$try" = 5 ] && exit 1; echo "hdiutil failed; retrying in 15 s"; sleep 15
+          done
       - name: Archive (Linux)
         if: runner.os == 'Linux'
         run: |
