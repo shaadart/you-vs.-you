@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 # Qt pieces the window never loads.
@@ -95,3 +96,23 @@ def prune(binaries: list, datas: list) -> tuple[list, list]:
     dropped = [b[0] for b in binaries if not keep(b)]
     print(f"prune_linux: dropped {len(dropped)} unused libraries")
     return [b for b in binaries if keep(b)], datas
+
+
+def host_libs(folder: Path) -> list[Path]:
+    """Host-only libraries in a finished build (none may ship: they break the host's GPU driver)."""
+    return sorted(p for p in folder.rglob("lib*.so*") if HOST_ONLY.match(p.name))
+
+
+def remove_host_libs(folder: Path) -> None:
+    """PyInstaller can collect some after the Analysis lists are pruned; remove those too."""
+    found = host_libs(folder)
+    for p in found:
+        p.unlink()
+    print(f"prune_linux: removed {len(found)} host libraries from {folder.name}")
+
+
+if __name__ == "__main__":  # prune_linux.py dist/YouVsYou: exit 1 if a host library ships
+    left = host_libs(Path(sys.argv[1]))
+    for p in left:
+        print(f"host library in the build: {p}")
+    sys.exit(1 if left else 0)

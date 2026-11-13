@@ -49,6 +49,8 @@ jobs:
           if [ "$RUNNER_OS" = Linux ] && grep "Library not found" pyinstaller.log | grep -v "libtcl\|libtk"; then
             echo "::error::install the libraries above on the build machine"; exit 1
           fi
+          # libstdc++, Mesa, X11 and friends must come from the user's system, or their GPU driver fails
+          if [ "$RUNNER_OS" = Linux ]; then uv run python packaging/prune_linux.py dist/YouVsYou; fi
       - name: Self-test the frozen app (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

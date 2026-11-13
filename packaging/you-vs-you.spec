@@ -30,7 +30,7 @@ a = Analysis(
 )
 if sys.platform.startswith("linux"):  # the window's Qt, without the build host's libraries
     sys.path.insert(0, str(root / "packaging"))
-    from prune_linux import prune
+    from prune_linux import prune, remove_host_libs
 
     a.binaries, a.datas = prune(a.binaries, a.datas)
 pyz = PYZ(a.pure)
@@ -45,6 +45,8 @@ exe = EXE(
     icon=str(icons / icon) if icon else None,
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="YouVsYou")
+if sys.platform.startswith("linux"):
+    remove_host_libs(Path(DISTPATH) / "YouVsYou")
 if sys.platform == "darwin":
     app = BUNDLE(
         coll,
@@ -53,7 +55,7 @@ if sys.platform == "darwin":
         bundle_identifier="com.madebyshaad.youvsyou",
         info_plist={
             "CFBundleDisplayName": "You vs. You",
-            "CFBundleShortVersionString": "0.2.1",
+            "CFBundleShortVersionString": "0.2.2",
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "11.0",
         },

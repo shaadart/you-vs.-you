@@ -1,6 +1,6 @@
 [project]
 name = "you-vs-you"
-version = "0.2.1"
+version = "0.2.2"
 description = "You vs. You: a local-first chess opponent that learns how you play."
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
