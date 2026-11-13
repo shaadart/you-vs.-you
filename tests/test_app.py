@@ -433,6 +433,22 @@ def test_linux_prune_drops_qt_extras_and_host_libraries():
         assert not HOST_ONLY.match(ours), ours
 
 
+def test_linux_build_keeps_no_host_library(tmp_path):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).parents[1] / "packaging"))
+    from prune_linux import host_libs, remove_host_libs
+
+    (tmp_path / "_internal" / "PyQt6").mkdir(parents=True)
+    for name in ("libstdc++.so.6", "libgcc_s.so.1", "libz.so.1", "PyQt6/libQt6Core.so.6"):
+        (tmp_path / "_internal" / name).write_bytes(b"")
+    assert [p.name for p in host_libs(tmp_path)] == ["libgcc_s.so.1", "libstdc++.so.6", "libz.so.1"]
+    remove_host_libs(tmp_path)
+    assert host_libs(tmp_path) == []
+    assert (tmp_path / "_internal" / "PyQt6" / "libQt6Core.so.6").exists()
+
+
 def test_csp_hashes_scripts_as_the_browser_sees_them():
     import hashlib
     from base64 import b64encode as enc
